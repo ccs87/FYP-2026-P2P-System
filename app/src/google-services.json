@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "211953761667",
+    "project_id": "fyp-p2p-system",
+    "storage_bucket": "fyp-p2p-system.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:211953761667:android:7a217cbf154066c4eacab6",
+        "android_client_info": {
+          "package_name": "com.company.fypp2p"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC0CrIA5OsMTy2CUnDD6MSppCbE9LUHtN8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
