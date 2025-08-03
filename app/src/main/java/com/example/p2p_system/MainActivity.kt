@@ -45,13 +45,8 @@ fun AppNavigation(
     ) {
         composable("login") {
             LoginScreen(
-                onLoginClick = { username, password ->
-                    if (AuthService.login(username, password)) {
-                        println("Login successful for $username")
-                        // Navigate to main app screen
-                    } else {
-                        println("Login failed")
-                    }
+                onLoginSuccess = { username ->
+                    navController.navigate("home/$username")
                 },
                 onRegisterClick = { navController.navigate("register") }
             )
@@ -64,6 +59,20 @@ fun AppNavigation(
                 onBackToLogin = { navController.popBackStack() }
             )
         }
+        composable("home/{username}") { backStackEntry ->
+            val username = backStackEntry.arguments?.getString("username") ?: ""
+            HomeMenu(
+                username = username,
+                onReturnToLogin = { navController.navigate("login") },
+                onNavigateToTransaction = { navController.navigate("transaction/$username") }
+            )
+        }
+        composable("transaction/{username}") { backStackEntry ->
+            val username = backStackEntry.arguments?.getString("username") ?: ""
+            TransactionMenu(
+                username = username,
+                onBackToHome = { navController.popBackStack() }
+            )
+        }
     }
 }
-

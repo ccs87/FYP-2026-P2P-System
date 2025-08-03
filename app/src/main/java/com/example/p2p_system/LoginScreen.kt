@@ -8,16 +8,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
-    onLoginClick: (String, String) -> Unit,
-    onRegisterClick: () -> Unit, // New parameter for navigation
+    onLoginSuccess: (String) -> Unit,
+    onRegisterClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -60,7 +63,13 @@ fun LoginScreen(
         Button(
             onClick = {
                 if (username.isNotEmpty() && password.isNotEmpty()) {
-                    onLoginClick(username, password)
+                    if (AuthService.login(username, password)) {
+                        onLoginSuccess(username)
+                    } else {
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("Invalid credentials. Please create an account.")
+                        }
+                    }
                 } else {
                     errorMessage = "Please enter username and password"
                 }
@@ -79,4 +88,9 @@ fun LoginScreen(
             Text(text = "Create Account")
         }
     }
+
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier.fillMaxWidth()
+    )
 }

@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 @Composable
 fun RegisterScreen(
@@ -17,11 +18,12 @@ fun RegisterScreen(
     modifier: Modifier = Modifier
 ) {
     var username by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(
         modifier = modifier
@@ -45,16 +47,6 @@ fun RegisterScreen(
             value = username,
             onValueChange = { username = it },
             label = { Text("Username") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text("Email") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -88,7 +80,7 @@ fun RegisterScreen(
             Button(
                 onClick = {
                     when {
-                        username.isEmpty() || email.isEmpty() || password.isEmpty() -> {
+                        username.isEmpty() || password.isEmpty() -> {
                             errorMessage = "Please fill all fields"
                         }
                         password != confirmPassword -> {
@@ -96,10 +88,13 @@ fun RegisterScreen(
                         }
                         else -> {
                             isLoading = true
-                            val success = AuthService.register(username, password, email)
+                            val success = AuthService.register(username, password)
                             isLoading = false
 
                             if (success) {
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Account created successfully!")
+                                }
                                 onRegisterSuccess()
                             } else {
                                 errorMessage = "Username already taken"
@@ -122,4 +117,10 @@ fun RegisterScreen(
             Text(text = "Back to Login")
         }
     }
+
+    // SnackbarHost to display the success message
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier.fillMaxWidth()
+    )
 }
