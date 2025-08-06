@@ -16,12 +16,30 @@ object ErrorHandler {
         }
     }
 
-    fun handleAuthError(errorMessage: String): String {
-        return when (errorMessage) {
-            "Username already exists" -> "This username is already taken. Please choose another."
-            "Invalid credentials" -> "The username or password is incorrect."
-            "Empty fields" -> "Please fill in all required fields."
-            else -> "An unknown authentication error occurred."
+    fun validateLogin(username: String, password: String): String? {
+        return when {
+            username.isEmpty() || password.isEmpty() -> "Please enter username and password."
+            !AuthService.login(username, password) -> "Invalid credentials. Please try again."
+            else -> null
+        }
+    }
+
+    fun validateRegistration(username: String, password: String, confirmPassword: String): String? {
+        return when {
+            username.isEmpty() || password.isEmpty() -> "Please fill all fields."
+            password != confirmPassword -> "Passwords don't match."
+            !AuthService.register(username, password) -> "Username already taken."
+            else -> null
+        }
+    }
+
+    fun validateTransfer(fromUser: String, toUser: String, amount: String): String? {
+        val parsedAmount = amount.toDoubleOrNull()
+        return when {
+            toUser.isEmpty() -> "Recipient username cannot be empty."
+            parsedAmount == null || parsedAmount <= 0 -> "Invalid transfer amount."
+            !AuthService.transfer(fromUser, toUser, parsedAmount) -> "Transfer failed. Check balance or recipient username."
+            else -> null
         }
     }
 }

@@ -79,27 +79,13 @@ fun RegisterScreen(
         } else {
             Button(
                 onClick = {
-                    when {
-                        username.isEmpty() || password.isEmpty() -> {
-                            errorMessage = "Please fill all fields"
-                        }
-                        password != confirmPassword -> {
-                            errorMessage = "Passwords don't match"
-                        }
-                        else -> {
-                            isLoading = true
-                            val success = AuthService.register(username, password)
-                            isLoading = false
-
-                            if (success) {
-                                coroutineScope.launch {
-                                    snackbarHostState.showSnackbar("Account created successfully!")
-                                }
-                                onRegisterSuccess()
-                            } else {
-                                errorMessage = "Username already taken"
-                            }
-                        }
+                    val error = ErrorHandler.validateRegistration(username, password, confirmPassword)
+                    if (error == null) {
+                        isLoading = true
+                        onRegisterSuccess()
+                        isLoading = false
+                    } else {
+                        errorMessage = error
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -118,7 +104,6 @@ fun RegisterScreen(
         }
     }
 
-    // SnackbarHost to display the success message
     SnackbarHost(
         hostState = snackbarHostState,
         modifier = Modifier.fillMaxWidth()

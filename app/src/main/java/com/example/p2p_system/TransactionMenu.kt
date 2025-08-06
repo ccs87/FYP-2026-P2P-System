@@ -61,17 +61,8 @@ fun TransactionMenu(
 
         Button(
             onClick = {
-                val amount = transferAmount.toDoubleOrNull()
-                if (amount != null && transferTo.isNotEmpty()) {
-                    val success = AuthService.transfer(username, transferTo, amount)
-                    transferMessage = if (success) {
-                        "Transfer successful!"
-                    } else {
-                        "Transfer failed. Check balance or recipient username."
-                    }
-                } else {
-                    transferMessage = "Invalid input. Please enter a valid amount and recipient."
-                }
+                val error = ErrorHandler.validateTransfer(username, transferTo, transferAmount)
+                transferMessage = error ?: "Transfer successful!"
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -83,7 +74,7 @@ fun TransactionMenu(
         if (transferMessage.isNotEmpty()) {
             Text(
                 text = transferMessage,
-                color = MaterialTheme.colorScheme.error,
+                color = if (transferMessage == "Transfer successful!") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyLarge
             )
         }
