@@ -16,10 +16,21 @@ object VibrationUtil {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val vibrationEffect = VibrationEffect.createOneShot(duration, amplitude)
                 vibrator.vibrate(vibrationEffect)
-            }
-            else {
-                // Fallback for devices with API < 26
+            } else {
                 vibrator.vibrate(duration)
+            }
+        }
+    }
+
+    @RequiresPermission(Manifest.permission.VIBRATE)
+    fun triggerVibrationPattern(context: Context, pattern: LongArray) {
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        if (vibrator?.hasVibrator() == true) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val vibrationEffect = VibrationEffect.createWaveform(pattern, -1) // -1 means no repeat
+                vibrator.vibrate(vibrationEffect)
+            } else {
+                vibrator.vibrate(pattern, -1)
             }
         }
     }
