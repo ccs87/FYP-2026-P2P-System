@@ -6,14 +6,16 @@ data class User(
 )
 
 object AuthService {
+    //Pre existing users for testing purposes
     private val users = mutableListOf(
-        User(username = "test1", password = "1234"), // Pre-existing account
-        User(username = "test2", password = "1234") // Second account
+        User(username = "test1", password = "1234"),
+        User(username = "test2", password = "1234")
     )
 
     private val balances = mutableMapOf(
-        "test1" to 100.0, // Default balance for test1
-        "test2" to 100.0  // Default balance for test2
+        //default balances for testing purposes
+        "test1" to 1000.0,
+        "test2" to 1000.0
     )
 
     private val favorites = mutableMapOf(
@@ -23,11 +25,11 @@ object AuthService {
 
     fun register(username: String, password: String): Boolean {
         if (users.any { it.username == username }) {
-            return false // Username already exists
+            return false
         }
         users.add(User(username, password))
-        balances[username] = 100.0 // Set default balance
-        favorites[username] = emptyList() // Initialize empty favorite list
+        balances[username] = 100.0
+        favorites[username] = emptyList()
         return true
     }
 
@@ -39,9 +41,6 @@ object AuthService {
         return balances[username]
     }
 
-    fun getFavorites(username: String): List<String> {
-        return favorites[username] ?: emptyList()
-    }
 
     fun transfer(fromUser: String, toUser: String, amount: Double): Boolean {
         val fromBalance = balances[fromUser] ?: return false

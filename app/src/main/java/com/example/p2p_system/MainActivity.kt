@@ -63,15 +63,7 @@ fun AppNavigation(
             val username = backStackEntry.arguments?.getString("username") ?: ""
             HomeMenu(
                 username = username,
-                onReturnToLogin = { navController.navigate("login") },
-                onNavigateToTransaction = { navController.navigate("transaction/$username") }
-            )
-        }
-        composable("transaction/{username}") { backStackEntry ->
-            val username = backStackEntry.arguments?.getString("username") ?: ""
-            TransactionMenu(
-                username = username,
-                onBackToHome = { navController.popBackStack() }
+                onReturnToLogin = { navController.navigate("login") }
             )
         }
     }

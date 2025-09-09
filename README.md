@@ -1,4 +1,4 @@
-# Secure Peer-to-Peer Payment System on Android-Based Mobile Devices via Motion Sensors and Haptic Feedback
+# Secure Peer-to-Peer Payment System on Android-Based Mobile Devices via Vibration and Acceleration
 
 ## Subject Area(s):
 - Computer and Information Systems Security
