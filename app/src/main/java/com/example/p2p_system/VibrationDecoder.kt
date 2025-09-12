@@ -4,41 +4,43 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.util.Log
 import kotlin.math.sqrt
 import kotlinx.coroutines.*
 
 class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventListener {
-    private val accelerometerData = mutableListOf<Float>()
-    private var onDecoded: ((String) -> Unit)? = null
+    private var onDecoded: ((Char) -> Unit)? = null
     private var onAccelerationData: ((Float) -> Unit)? = null
     private var onTimeout: (() -> Unit)? = null
-    private var job: Job? = null
+    private var onStatusUpdate: ((String) -> Unit)? = null
     private var timeoutJob: Job? = null
 
-    private var receivedMessage = StringBuilder()
     private var isReceiving = false
     private var currentCharBits = StringBuilder()
     private var beaconDetected = false
     private var framesSinceBeacon = 0
+    private var lastVibrationTime = 0L
 
     fun startListening(
-        onDataReceived: (String) -> Unit,
+        onDataReceived: (Char) -> Unit,
         onAccelerationData: ((Float) -> Unit)? = null,
         onTimeout: (() -> Unit)? = null,
-        timeoutMs: Long = 90000
+        onStatusUpdate: ((String) -> Unit)? = null,
+        timeoutMs: Long = 30000 // 30 seconds timeout
     ) {
         this.onDecoded = onDataReceived
         this.onAccelerationData = onAccelerationData
         this.onTimeout = onTimeout
+        this.onStatusUpdate = onStatusUpdate
 
-        receivedMessage.clear()
         isReceiving = false
         beaconDetected = false
         framesSinceBeacon = 0
-        accelerometerData.clear()
+        currentCharBits.clear()
+        lastVibrationTime = System.currentTimeMillis()
 
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
+        sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST)
 
         // Set timeout
         timeoutJob = CoroutineScope(Dispatchers.Main).launch {
@@ -46,13 +48,15 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             stopListening()
             onTimeout?.invoke()
         }
+
+        onStatusUpdate?.invoke("Listening for commands...")
     }
 
     fun stopListening() {
         sensorManager.unregisterListener(this)
         timeoutJob?.cancel()
-        job?.cancel()
         isReceiving = false
+        onStatusUpdate?.invoke("Stopped listening")
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -63,15 +67,23 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                         it.values[2] * it.values[2]
             )
 
+            val currentTime = System.currentTimeMillis()
+
+            // Update last vibration time
+            if (magnitude > 2.0) {
+                lastVibrationTime = currentTime
+            }
+
             // Add to acceleration data for graphing
             onAccelerationData?.invoke(magnitude)
 
-            // Check for beacon (long vibration)
+            // Check for beacon (strong vibration)
             if (!beaconDetected && magnitude > 15.0) {
                 beaconDetected = true
-                framesSinceBeacon = 0
                 isReceiving = true
+                framesSinceBeacon = 0
                 currentCharBits.clear()
+                onStatusUpdate?.invoke("Beacon detected. Receiving command...")
                 return
             }
 
@@ -84,29 +96,31 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                     val bit = if (magnitude > 2.0) '1' else '0'
                     currentCharBits.append(bit)
 
+                    onStatusUpdate?.invoke("Frame $framesSinceBeacon: $bit (${magnitude.toInt()})")
+
                     // If we've collected 7 bits, decode the character
                     if (framesSinceBeacon == 7) {
                         if (currentCharBits.length == 7) {
-                            val charCode = currentCharBits.toString().toInt(2)
-                            receivedMessage.append(charCode.toChar())
-                            currentCharBits.clear()
+                            try {
+                                val charCode = currentCharBits.toString().toInt(2)
+                                val character = charCode.toChar()
+                                onStatusUpdate?.invoke("Decoded command: '$character'")
+                                onDecoded?.invoke(character)
+                            } catch (e: Exception) {
+                                onStatusUpdate?.invoke("Error decoding command: ${e.message}")
+                            }
                         }
 
-                        // Reset for next character
+                        // Reset for next command
                         beaconDetected = false
                         framesSinceBeacon = 0
+                        isReceiving = false
                     }
                 } else if (framesSinceBeacon > 7) {
-                    // We've passed the data frames, check if message is complete
-                    if (receivedMessage.isNotEmpty() && receivedMessage.toString().contains('&')) {
-                        // Assume message is complete when we have both amount and sender
-                        onDecoded?.invoke(receivedMessage.toString())
-                        stopListening()
-                    }
-
-                    // Reset for possible next character
+                    // Reset if we missed the frame window
                     beaconDetected = false
                     framesSinceBeacon = 0
+                    isReceiving = false
                 }
             }
         }

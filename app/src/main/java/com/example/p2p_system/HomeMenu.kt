@@ -1,9 +1,7 @@
-// HomeMenu.kt
 package com.example.p2p_system
 
 import android.content.Context
 import android.hardware.SensorManager
-import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -17,8 +15,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
+import kotlinx.coroutines.CoroutineScope
 
 @Composable
 fun HomeMenu(
@@ -29,16 +26,16 @@ fun HomeMenu(
     val context = LocalContext.current
     val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     val vibrationDecoder = remember { VibrationDecoder(sensorManager) }
-    var isTransactionDialogOpen by remember { mutableStateOf(false) }
-    var transactionAmount by remember { mutableStateOf("") }
     var transactionStatus by remember { mutableStateOf("") }
     var isListening by remember { mutableStateOf(false) }
     var isSending by remember { mutableStateOf(false) }
     var isBalanceVisible by remember { mutableStateOf(false) }
-    var receivedTransaction by remember { mutableStateOf<TransactionData?>(null) }
-    var isConfirmDialogOpen by remember { mutableStateOf(false) }
+    var decodingStatus by remember { mutableStateOf("") }
     var accelerationData by remember { mutableStateOf(listOf<Float>()) }
     var isTransmitting by remember { mutableStateOf(false) }
+    var transmittedPattern by remember { mutableStateOf<List<Float>?>(null) }
+    var currentCommand by remember { mutableStateOf<Char?>(null) }
+    var isConfirmDialogOpen by remember { mutableStateOf(false) }
     val balance = AuthService.getBalance(username) ?: 0.0
     val coroutineScope = rememberCoroutineScope()
 
@@ -51,8 +48,10 @@ fun HomeMenu(
         isListening = false
         isTransmitting = false
         transactionStatus = ""
+        decodingStatus = ""
         accelerationData = emptyList()
-        receivedTransaction = null
+        transmittedPattern = null
+        currentCommand = null
         vibrationDecoder.stopListening()
         VibrationController.cancelVibration(context)
     }
@@ -87,44 +86,97 @@ fun HomeMenu(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Transaction button
-        Button(
-            onClick = { isTransactionDialogOpen = true },
-            enabled = !isSending && !isListening && !isTransmitting,
+        // Payment buttons
+        Text("Send Payment:", style = MaterialTheme.typography.bodyLarge)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            horizontalArrangement = Arrangement.SpaceEvenly,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Start Transaction")
+            Button(
+                onClick = {
+                    if (!isSending && !isListening && !isTransmitting) {
+                        sendPayment(100, username, otherUser, context, vibrationDecoder,
+                            coroutineScope, ::resetAllStates,
+                            { status -> transactionStatus = status },
+                            { status -> decodingStatus = status },
+                            { transmitting -> isTransmitting = transmitting },
+                            { sending -> isSending = sending },
+                            { pattern -> transmittedPattern = pattern })
+                    }
+                },
+                enabled = !isSending && !isListening && !isTransmitting
+            ) {
+                Text("$100")
+            }
+            Button(
+                onClick = {
+                    if (!isSending && !isListening && !isTransmitting) {
+                        sendPayment(200, username, otherUser, context, vibrationDecoder,
+                            coroutineScope, ::resetAllStates,
+                            { status -> transactionStatus = status },
+                            { status -> decodingStatus = status },
+                            { transmitting -> isTransmitting = transmitting },
+                            { sending -> isSending = sending },
+                            { pattern -> transmittedPattern = pattern })
+                    }
+                },
+                enabled = !isSending && !isListening && !isTransmitting
+            ) {
+                Text("$200")
+            }
+            Button(
+                onClick = {
+                    if (!isSending && !isListening && !isTransmitting) {
+                        sendPayment(300, username, otherUser, context, vibrationDecoder,
+                            coroutineScope, ::resetAllStates,
+                            { status -> transactionStatus = status },
+                            { status -> decodingStatus = status },
+                            { transmitting -> isTransmitting = transmitting },
+                            { sending -> isSending = sending },
+                            { pattern -> transmittedPattern = pattern })
+                    }
+                },
+                enabled = !isSending && !isListening && !isTransmitting
+            ) {
+                Text("$300")
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Listen for vibration
+        // Listen for commands
         Button(
             onClick = {
                 if (!isListening) {
                     resetAllStates()
                     isListening = true
-                    transactionStatus = "Listening for transactions..."
+                    transactionStatus = "Listening for commands..."
+                    decodingStatus = "Waiting for vibration..."
                     accelerationData = emptyList()
 
                     vibrationDecoder.startListening(
-                        onDataReceived = { message ->
-                            try {
-                                val transaction = parseTransactionMessage(message)
-                                receivedTransaction = transaction
-                                isConfirmDialogOpen = true
-                                transactionStatus = "Received transaction request from ${transaction.sender}"
-                            } catch (e: Exception) {
-                                transactionStatus = "Error parsing transaction: ${e.message}"
-                                resetAllStates()
-                            }
+                        onDataReceived = { command ->
+                            handleReceivedCommand(command, username, otherUser, context,
+                                vibrationDecoder, coroutineScope,
+                                ::resetAllStates,
+                                { status -> transactionStatus = status },
+                                { status -> decodingStatus = status },
+                                { command -> currentCommand = command },
+                                { open -> isConfirmDialogOpen = open },
+                                { transmitting -> isTransmitting = transmitting },
+                                { pattern -> transmittedPattern = pattern })
                         },
                         onAccelerationData = { data ->
                             accelerationData = accelerationData.takeLast(100) + data
                         },
                         onTimeout = {
-                            transactionStatus = "Listening timeout - no transaction received"
+                            transactionStatus = "Listening timeout - no command received"
+                            decodingStatus = "Timeout reached"
                             resetAllStates()
+                        },
+                        onStatusUpdate = { status ->
+                            decodingStatus = status
                         }
                     )
                 }
@@ -132,7 +184,7 @@ fun HomeMenu(
             enabled = !isSending && !isListening && !isTransmitting,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isListening) "Listening..." else "Listen for Transaction")
+            Text(if (isListening) "Listening..." else "Listen for Commands")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -140,6 +192,16 @@ fun HomeMenu(
         // Display transaction status
         if (transactionStatus.isNotEmpty()) {
             Text(transactionStatus, style = MaterialTheme.typography.bodyMedium)
+        }
+
+        // Display decoding status
+        if (decodingStatus.isNotEmpty() && isListening) {
+            Text(
+                text = decodingStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
         }
 
         // Stop transmission button (only show when transmitting)
@@ -170,12 +232,15 @@ fun HomeMenu(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // Display vibration pattern graph when listening
-        if (isListening && accelerationData.isNotEmpty()) {
+        // Display vibration pattern graph when listening or transmitting
+        if ((isListening && accelerationData.isNotEmpty()) || (isTransmitting && transmittedPattern != null)) {
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Vibration Pattern", style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = if (isListening) "Received Vibration Pattern" else "Transmitted Vibration Pattern",
+                style = MaterialTheme.typography.bodySmall
+            )
             VibrationGraph(
-                data = accelerationData,
+                data = if (isListening) accelerationData else transmittedPattern!!,
                 isTransmittedPattern = false,
                 modifier = Modifier.height(100.dp).fillMaxWidth()
             )
@@ -195,133 +260,189 @@ fun HomeMenu(
         }
     }
 
-    // Transaction dialog
-    if (isTransactionDialogOpen) {
-        AlertDialog(
-            onDismissRequest = { isTransactionDialogOpen = false },
-            title = { Text("Enter Transaction Amount") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = transactionAmount,
-                        onValueChange = { newValue ->
-                            // Allow only digits and limit to 3 characters
-                            if (newValue.isEmpty() || (newValue.length <= 3 && newValue.all { it.isDigit() })) {
-                                transactionAmount = newValue
-                            }
-                        },
-                        label = { Text("Amount (100-999)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val amount = transactionAmount.toIntOrNull()
-                        if (amount != null && amount in 100..999) {
-                            isTransactionDialogOpen = false
-                            isSending = true
-                            isTransmitting = true
-                            transactionStatus = "Preparing to send transaction..."
-
-                            coroutineScope.launch {
-                                // Wait 2 seconds before starting vibration
-                                delay(2000)
-
-                                // Create transaction message
-                                val message = "AMOUNT=$amount&SENDER=$username"
-                                val pattern = VibrationEncoder.encodeMessage(message)
-
-                                // Send vibration
-                                VibrationController.vibrate(context, pattern)
-                                transactionStatus = "Transaction sent. Waiting for confirmation..."
-
-                                // Start listening for confirmation
-                                vibrationDecoder.startListening(
-                                    onDataReceived = { response ->
-                                        if (response == "RECEIVED") {
-                                            // Update balance - transfer to the other user
-                                            if (AuthService.transfer(username, otherUser, amount.toDouble())) {
-                                                transactionStatus = "Transaction completed successfully! Sent $$amount to $otherUser"
-                                            } else {
-                                                transactionStatus = "Transaction failed: Insufficient balance"
-                                            }
-                                            resetAllStates()
-                                        }
-                                    },
-                                    onTimeout = {
-                                        transactionStatus = "Confirmation timeout - transaction failed"
-                                        resetAllStates()
-                                    },
-                                    timeoutMs = 90000
-                                )
-                            }
-                        } else {
-                            transactionStatus = "Please enter a valid amount between 100-999"
-                        }
-                    }
-                ) {
-                    Text("Confirm")
-                }
-            },
-            dismissButton = {
-                Button(onClick = { isTransactionDialogOpen = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
     // Transaction confirmation dialog
-    if (isConfirmDialogOpen && receivedTransaction != null) {
-        AlertDialog(
-            onDismissRequest = {
-                resetAllStates()
-                transactionStatus = "Transaction cancelled"
-            },
-            title = { Text("Transaction Request") },
-            text = {
-                Column {
-                    Text("Receive $${receivedTransaction!!.amount} from ${receivedTransaction!!.sender}?")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Your balance will be: $${(balance + receivedTransaction!!.amount)}")
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        // Update balance - transfer from sender to current user
-                        if (AuthService.transfer(receivedTransaction!!.sender, username, receivedTransaction!!.amount.toDouble())) {
-                            transactionStatus = "Transaction confirmed. Received $${receivedTransaction!!.amount} from ${receivedTransaction!!.sender}"
-                        } else {
-                            transactionStatus = "Transaction failed: Sender has insufficient balance"
-                        }
+    if (isConfirmDialogOpen && currentCommand != null) {
+        val amount = VibrationEncoder.getAmountForCommand(currentCommand!!)
+        if (amount != null && amount > 0) {
+            AlertDialog(
+                onDismissRequest = {
+                    resetAllStates()
+                    transactionStatus = "Transaction cancelled"
+                },
+                title = { Text("Transaction Request") },
+                text = {
+                    Column {
+                        Text("Receive $$amount from $otherUser?")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Your balance will be: $${(balance + amount)}")
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            // Update balance - transfer from sender to current user
+                            if (AuthService.transfer(otherUser, username, amount.toDouble())) {
+                                transactionStatus = "Transaction confirmed. Received $$amount from $otherUser"
 
-                        // Send confirmation back
-                        coroutineScope.launch {
-                            delay(2000) // Wait 2 seconds before sending confirmation
-                            val pattern = VibrationEncoder.encodeMessage("RECEIVED")
-                            VibrationController.vibrate(context, pattern)
+                                // Send confirmation back
+                                coroutineScope.launch {
+                                    delay(2000) // Wait 2 seconds before sending confirmation
+                                    val pattern = VibrationEncoder.encodeCommand('o')
+                                    transmittedPattern = generatePatternVisualization(pattern)
+                                    VibrationController.vibrate(context, pattern)
+                                    resetAllStates()
+                                }
+                            }
+                            else {
+                                transactionStatus = "Transaction failed: Sender has insufficient balance"
+                                resetAllStates()
+                            }
+                        }
+                    ) {
+                        Text("Accept")
+                    }
+                },
+                dismissButton = {
+                    Button(
+                        onClick = {
+                            // Send retry request
+                            coroutineScope.launch {
+                                delay(1000) // Wait 1 second before sending retry request
+                                val pattern = VibrationEncoder.encodeCommand('r')
+                                transmittedPattern = generatePatternVisualization(pattern)
+                                VibrationController.vibrate(context, pattern)
+                                resetAllStates()
+                                transactionStatus = "Transaction rejected"
+                            }
+                        }
+                    ) {
+                        Text("Reject")
+                    }
+                }
+            )
+        }
+    }
+}
+
+// Function to send a payment
+fun sendPayment(
+    amount: Int,
+    username: String,
+    otherUser: String,
+    context: Context,
+    vibrationDecoder: VibrationDecoder,
+    coroutineScope: CoroutineScope,
+    resetAllStates: () -> Unit,
+    setTransactionStatus: (String) -> Unit,
+    setDecodingStatus: (String) -> Unit,
+    setIsTransmitting: (Boolean) -> Unit,
+    setIsSending: (Boolean) -> Unit,
+    setTransmittedPattern: (List<Float>) -> Unit
+) {
+    val command = VibrationEncoder.getCommandForAmount(amount)
+    if (command != null) {
+        setIsSending(true)
+        setIsTransmitting(true)
+        setTransactionStatus("Preparing to send payment...")
+
+        coroutineScope.launch {
+            // Wait 2 seconds before starting vibration
+            delay(2000)
+
+            // Send payment command
+            val pattern = VibrationEncoder.encodeCommand(command)
+            setTransmittedPattern(generatePatternVisualization(pattern))
+            VibrationController.vibrate(context, pattern)
+            setTransactionStatus("Payment sent. Waiting for confirmation...")
+
+            // Start listening for confirmation
+            vibrationDecoder.startListening(
+                onDataReceived = { response ->
+                    when (response) {
+                        'o' -> {
+                            // Confirmation received
+                            if (AuthService.transfer(username, otherUser, amount.toDouble())) {
+                                setTransactionStatus("Payment confirmed! Sent $$amount to $otherUser")
+                            } else {
+                                setTransactionStatus("Payment failed: Insufficient balance")
+                            }
+                            resetAllStates()
+                        }
+                        'r' -> {
+                            // Retry request
+                            setTransactionStatus("Receiver requested retry. Resending payment...")
+                            // Resend the payment
+                            coroutineScope.launch {
+                                delay(2000)
+                                VibrationController.vibrate(context, pattern)
+                                setTransactionStatus("Payment resent. Waiting for confirmation...")
+                            }
+                        }
+                        else -> {
+                            setTransactionStatus("Invalid response received: $response")
                             resetAllStates()
                         }
                     }
-                ) {
-                    Text("Accept")
+                },
+                onAccelerationData = { /* Not needed for confirmation */ },
+                onTimeout = {
+                    setTransactionStatus("No response received. Payment may not have been completed.")
+                    resetAllStates()
+                },
+                onStatusUpdate = { status ->
+                    setDecodingStatus(status)
                 }
-            },
-            dismissButton = {
-                Button(
-                    onClick = {
-                        resetAllStates()
-                        transactionStatus = "Transaction rejected"
-                    }
-                ) {
-                    Text("Reject")
-                }
+            )
+        }
+    } else {
+        setTransactionStatus("Invalid amount: $$amount")
+        resetAllStates()
+    }
+}
+
+// Function to handle received commands
+fun handleReceivedCommand(
+    command: Char,
+    username: String,
+    otherUser: String,
+    context: Context,
+    vibrationDecoder: VibrationDecoder,
+    coroutineScope: CoroutineScope,
+    resetAllStates: () -> Unit,
+    setTransactionStatus: (String) -> Unit,
+    setDecodingStatus: (String) -> Unit,
+    setCurrentCommand: (Char) -> Unit,
+    setIsConfirmDialogOpen: (Boolean) -> Unit,
+    setIsTransmitting: (Boolean) -> Unit,
+    setTransmittedPattern: (List<Float>) -> Unit
+) {
+    when (command) {
+        'a', 'b', 'c' -> {
+            // Payment command received
+            val amount = VibrationEncoder.getAmountForCommand(command)
+            if (amount != null) {
+                setCurrentCommand(command)
+                setIsConfirmDialogOpen(true)
+                setTransactionStatus("Received payment request: $$amount from $otherUser")
+            } else {
+                setTransactionStatus("Invalid payment command received: $command")
+                resetAllStates()
             }
-        )
+        }
+        'o' -> {
+            // Confirmation received
+            setTransactionStatus("Payment confirmed by receiver")
+            resetAllStates()
+        }
+        'r' -> {
+            // Retry request received
+            setTransactionStatus("Receiver requested retry")
+            resetAllStates()
+        }
+        else -> {
+            setTransactionStatus("Unknown command received: $command")
+            resetAllStates()
+        }
     }
 }
 
@@ -363,20 +484,27 @@ fun VibrationGraph(data: List<Float>, isTransmittedPattern: Boolean = false, mod
     }
 }
 
-data class TransactionData(val amount: Int, val sender: String)
+// Generate visualization data for a vibration pattern
+fun generatePatternVisualization(pattern: LongArray): List<Float> {
+    val visualization = mutableListOf<Float>()
+    var isVibrating = false
 
-fun parseTransactionMessage(message: String): TransactionData {
-    val parts = message.split("&")
-    if (parts.size != 2) throw IllegalArgumentException("Invalid message format")
+    for (duration in pattern) {
+        if (isVibrating) {
+            // Vibration phase - add high values
+            val points = (duration / 50).coerceAtLeast(1)
+            repeat(points.toInt()) {
+                visualization.add(10f)
+            }
+        } else {
+            // Pause phase - add low values
+            val points = (duration / 50).coerceAtLeast(1)
+            repeat(points.toInt()) {
+                visualization.add(0f)
+            }
+        }
+        isVibrating = !isVibrating
+    }
 
-    val amountPart = parts[0]
-    val senderPart = parts[1]
-
-    if (!amountPart.startsWith("AMOUNT=")) throw IllegalArgumentException("Invalid amount format")
-    if (!senderPart.startsWith("SENDER=")) throw IllegalArgumentException("Invalid sender format")
-
-    val amount = amountPart.substring(7).toInt()
-    val sender = senderPart.substring(7)
-
-    return TransactionData(amount, sender)
+    return visualization
 }
