@@ -171,9 +171,24 @@ fun HomeMenu(
                             accelerationData = accelerationData.takeLast(100) + data
                         },
                         onTimeout = {
-                            transactionStatus = "Listening timeout - no command received"
-                            decodingStatus = "Timeout reached"
-                            resetAllStates()
+                            // Show last decoded command if available
+                            if (vibrationDecoder.lastDecodedCommand != null) {
+                                transactionStatus = "Timeout. Last decoded command: '${vibrationDecoder.lastDecodedCommand}'"
+                                decodingStatus = "Timeout reached. Sending retry request..."
+
+                                // Send retry vibration ('r') back to sender
+                                coroutineScope.launch {
+                                    val pattern = VibrationEncoder.encodeCommand('r')
+                                    transmittedPattern = generatePatternVisualization(pattern)
+                                    VibrationController.vibrate(context, pattern)
+                                    delay(2000)
+                                    resetAllStates()
+                                }
+                            } else {
+                                transactionStatus = "Listening timeout - no command received"
+                                decodingStatus = "Timeout reached"
+                                resetAllStates()
+                            }
                         },
                         onStatusUpdate = { status ->
                             decodingStatus = status

@@ -7,6 +7,14 @@ import android.hardware.SensorManager
 import android.util.Log
 import kotlin.math.sqrt
 import kotlinx.coroutines.*
+import kotlin.collections.get
+import kotlin.compareTo
+import kotlin.inc
+import kotlin.invoke
+import kotlin.text.append
+import kotlin.text.toInt
+import kotlin.times
+import kotlin.toString
 
 class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventListener {
     private var onDecoded: ((Char) -> Unit)? = null
@@ -20,6 +28,9 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private var beaconDetected = false
     private var framesSinceBeacon = 0
     private var lastVibrationTime = 0L
+
+    var lastDecodedCommand: Char? = null
+        private set
 
     fun startListening(
         onDataReceived: (Char) -> Unit,
@@ -59,26 +70,26 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         onStatusUpdate?.invoke("Stopped listening")
     }
 
+    // Kotlin - VibrationDecoder.kt
     override fun onSensorChanged(event: SensorEvent?) {
         event?.let {
-            val magnitude = sqrt(
-                it.values[0] * it.values[0] +
-                        it.values[1] * it.values[1] +
-                        it.values[2] * it.values[2]
-            )
+            val x = it.values[0]
+            val y = it.values[1]
+            val z = it.values[2]
+            val magnitudePower = x * x + y * y + z * z
+            val magnitude = sqrt(magnitudePower)
+
+//            Log.d("VibrationDecoder", "Magnitude: $magnitude, beaconDetected=$beaconDetected, isReceiving=$isReceiving, framesSinceBeacon=$framesSinceBeacon")
+            Log.d("VibrationDecoder", "MagnitudePower: $magnitudePower, beaconDetected=$beaconDetected, isReceiving=$isReceiving, framesSinceBeacon=$framesSinceBeacon")
+
 
             val currentTime = System.currentTimeMillis()
-
-            // Update last vibration time
-            if (magnitude > 2.0) {
-                lastVibrationTime = currentTime
-            }
 
             // Add to acceleration data for graphing
             onAccelerationData?.invoke(magnitude)
 
-            // Check for beacon (strong vibration)
-            if (!beaconDetected && magnitude > 15.0) {
+            // Simplified beacon detection: first vibration above threshold
+            if (!beaconDetected && magnitudePower > 95.0) {
                 beaconDetected = true
                 isReceiving = true
                 framesSinceBeacon = 0
@@ -90,34 +101,30 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             if (isReceiving) {
                 framesSinceBeacon++
 
-                // We're expecting 7 data frames after the beacon
+                // Collect 7 bits after beacon
                 if (framesSinceBeacon > 0 && framesSinceBeacon <= 7) {
-                    // Detect bit based on vibration intensity
-                    val bit = if (magnitude > 2.0) '1' else '0'
+                    val bit = if (magnitude > 10.0) '1' else '0'
                     currentCharBits.append(bit)
-
                     onStatusUpdate?.invoke("Frame $framesSinceBeacon: $bit (${magnitude.toInt()})")
 
-                    // If we've collected 7 bits, decode the character
                     if (framesSinceBeacon == 7) {
                         if (currentCharBits.length == 7) {
                             try {
                                 val charCode = currentCharBits.toString().toInt(2)
                                 val character = charCode.toChar()
+                                lastDecodedCommand = character
                                 onStatusUpdate?.invoke("Decoded command: '$character'")
                                 onDecoded?.invoke(character)
                             } catch (e: Exception) {
                                 onStatusUpdate?.invoke("Error decoding command: ${e.message}")
                             }
                         }
-
                         // Reset for next command
                         beaconDetected = false
                         framesSinceBeacon = 0
                         isReceiving = false
                     }
                 } else if (framesSinceBeacon > 7) {
-                    // Reset if we missed the frame window
                     beaconDetected = false
                     framesSinceBeacon = 0
                     isReceiving = false
