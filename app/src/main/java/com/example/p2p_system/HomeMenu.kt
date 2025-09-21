@@ -248,14 +248,13 @@ fun HomeMenu(
         }
 
         // Display vibration pattern graph when listening or transmitting
-        if ((isListening && accelerationData.isNotEmpty()) || (isTransmitting && transmittedPattern != null)) {
-            Spacer(modifier = Modifier.height(16.dp))
+        if (isListening && accelerationData.isNotEmpty()) {
             Text(
-                text = if (isListening) "Received Vibration Pattern" else "Transmitted Vibration Pattern",
+                text = "Received Vibration Pattern",
                 style = MaterialTheme.typography.bodySmall
             )
             VibrationGraph(
-                data = if (isListening) accelerationData else transmittedPattern!!,
+                data = accelerationData,
                 isTransmittedPattern = false,
                 modifier = Modifier.height(100.dp).fillMaxWidth()
             )

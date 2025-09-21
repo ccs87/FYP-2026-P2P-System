@@ -30,36 +30,48 @@ object VibrationEncoder {
     fun encodeCommand(command: Char): LongArray {
         val asciiCode = command.code
         val binaryString = asciiCode.toString(2).padStart(7, '0')
-        val pattern = mutableListOf<Long>()
         Log.d("VibrationEncoder", "Binary string for command '$command': $binaryString")
+        val pattern = mutableListOf<Long>()
 
-        // Beacon: 1s vibration
-        pattern.add(1000) // Vibrate for beacon
+        // Add beacon pattern logging
+        Log.d("VibrationEncoder", "=== BEACON PATTERN ===")
+        Log.d("VibrationEncoder", "Adding initial pause: 400ms")
+        pattern.add(400)   // Short pause
 
-        // 7 data frames
-        for (bit in binaryString) {
+        Log.d("VibrationEncoder", "Adding beacon vibration: 200ms")
+        pattern.add(200)   // Vibration - beacon
+
+        Log.d("VibrationEncoder", "Adding post-beacon pause: 400ms")
+        pattern.add(400)   // Pause after beacon
+
+        Log.d("VibrationEncoder", "Total beacon pattern duration: 1000ms (1s)")
+        Log.d("VibrationEncoder", "=== END BEACON ===")
+
+        // Active frames (7 bits)
+        for ((index, bit) in binaryString.withIndex()) {
+            val second = index + 1
+            Log.d("VibrationEncoder", "Frame $second: Bit=$bit (Second $second)")
             if (bit == '1') {
-                pattern.add(200) // Vibrate for 0.2s
-                pattern.add(800) // Pause for 0.8s
-            }
-            else {
-                pattern.add(1000) // Pause for 1s (no vibration)
+                pattern.add(400)   // Pause (0.4s)
+                pattern.add(200)   // Vibrate (0.2s)
+                pattern.add(400)   // Pause (0.4s)
+            } else {
+                pattern.add(1000)  // 1s pause (no vibration)
             }
         }
 
-        // 3 inactive frames (3s silence)
-        repeat(3) { pattern.add(1000) }
+        // Inactive frames (5 bits, all silent)
+        for (i in 1..5) {
+            val second = 7 + i
+            Log.d("VibrationEncoder", "Inactive Frame $second: No vibration (Second $second)")
+            pattern.add(1000) // 1s pause (no vibration)
+        }
+
+        // Calculate total duration for logging
+        val totalDuration = pattern.sum()
+        Log.d("VibrationEncoder", "Total pattern duration: ${totalDuration}ms (${totalDuration/1000}s)")
 
         return pattern.toLongArray()
     }
 
-
-//    fun encodeAmount(amount: Int): LongArray {
-//        val command = getCommandForAmount(amount)
-//        return if (command != null) {
-//            encodeCommand(command)
-//        } else {
-//            longArrayOf() // Empty pattern for invalid amount
-//        }
-//    }
 }
