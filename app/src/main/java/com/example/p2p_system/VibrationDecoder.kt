@@ -9,12 +9,6 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlinx.coroutines.*
 import java.util.*
-import kotlin.collections.removeFirst
-import kotlin.compareTo
-import kotlin.div
-import kotlin.text.compareTo
-import kotlin.text.toDouble
-import kotlin.text.toFloat
 
 class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventListener {
     private var onDecoded: ((Char) -> Unit)? = null
@@ -27,14 +21,11 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private var currentCharBits = StringBuilder()
     private var beaconDetected = false
     private var framesSinceBeacon = 0
-    private var lastVibrationTime = 0L
 
     // Beacon detection variables
     private var beaconStartTime = 0L
     private var beaconEndTime = 0L
     private var inBeacon = false
-    private val minBeaconDuration = 1000L // ms (1 second)
-    private val maxBeaconDuration = 2000L // ms (2 seconds)
 
     // Frame timing
     private var frameStartTime = 0L
@@ -46,6 +37,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private val historySize = 50
     private var baselineMagnitude = 0f
     private var magnitudeVariance = 0f
+    private var baselineEnergy = 0f
 
     // Logging
     private val logEntries = LinkedList<String>()
@@ -70,7 +62,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         beaconDetected = false
         framesSinceBeacon = 0
         currentCharBits.clear()
-        lastVibrationTime = System.currentTimeMillis()
         beaconStartTime = 0L
         beaconEndTime = 0L
         inBeacon = false
@@ -79,6 +70,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         magnitudeHistory.clear()
         baselineMagnitude = 0f
         magnitudeVariance = 0f
+        baselineEnergy = 0f
         logEntries.clear()
 
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -117,23 +109,33 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             // Update adaptive threshold
             updateAdaptiveThreshold(magnitude)
 
-            // Calculate dynamic threshold
-            val dynamicThreshold = baselineMagnitude + 3 * sqrt(magnitudeVariance).toFloat()
+            // Calculate signal energy in current window
+            val recentValues = currentFrameValues.takeLast(10)
+            val signalEnergy = if (recentValues.isNotEmpty()) {
+                recentValues.map { it * it }.average().toFloat()
+            } else {
+                magnitude * magnitude
+            }
+
+            // Dynamic threshold with energy component
+            val dynamicThreshold = baselineMagnitude + 2.5f * sqrt(magnitudeVariance).toFloat()
+            val energyThreshold = baselineEnergy * 1.5f
 
             // Log for debugging (less frequent to avoid spam)
             if (System.currentTimeMillis() % 200 < 10) {
-                addLog("Mag: ${"%.2f".format(magnitude)}, Threshold: ${"%.2f".format(dynamicThreshold)}")
+                addLog("Mag: ${magnitude.format(2)}, Energy: ${signalEnergy.format(2)}, " +
+                        "Threshold: ${dynamicThreshold.format(2)}")
             }
 
-            // Beacon detection using start/end timing
+            // Beacon detection using energy pattern
             if (!beaconDetected && !isReceiving) {
-                if (!inBeacon && magnitude > dynamicThreshold) {
+                if (!inBeacon && signalEnergy > energyThreshold) {
                     // Vibration started - potential beacon beginning
                     inBeacon = true
                     beaconStartTime = currentTime
-                    addLog("Beacon vibration started")
+                    addLog("Beacon vibration started (energy: ${signalEnergy.format(2)})")
                 }
-                else if (inBeacon && dynamicThreshold  <  magnitude) {
+                else if (inBeacon && signalEnergy < energyThreshold * 0.7f) {
                     // Vibration ended - check if it was a valid beacon
                     inBeacon = false
                     beaconEndTime = currentTime
@@ -141,8 +143,8 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
                     addLog("Beacon vibration ended, duration: ${beaconDuration}ms")
 
-                    // Check if duration matches expected beacon length
-                    if (beaconDuration in minBeaconDuration..maxBeaconDuration) {
+                    // Pattern matching for beacon (200ms vibration surrounded by pauses)
+                    if (beaconDuration in 150..250) {
                         // Valid beacon detected
                         beaconDetected = true
                         isReceiving = true
@@ -153,8 +155,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
                         addLog("BEACON DETECTED! Duration: ${beaconDuration}ms")
                         onStatusUpdate?.invoke("Beacon detected! Receiving command...")
-                    } else {
-                        addLog("Invalid beacon duration: ${beaconDuration}ms (expected: ${minBeaconDuration}-${maxBeaconDuration}ms)")
                     }
                 }
             } else if (isReceiving) {
@@ -163,19 +163,8 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
                 // Check if frame time has elapsed
                 if (currentTime - frameStartTime >= frameDuration) {
-                    // Process this frame
-                    val frameAverage = currentFrameValues.average().toFloat()
-                    val frameMax = currentFrameValues.maxOrNull() ?: 0f
-                    val frameMin = currentFrameValues.minOrNull() ?: 0f
-
-                    // Use adaptive threshold for bit detection
-                    val bit = if (frameAverage > dynamicThreshold) '1' else '0'
-                    currentCharBits.append(bit)
-
-                    addLog("Frame $framesSinceBeacon: $bit (avg: ${"%.2f".format(frameAverage)}, " +
-                            "min: ${"%.2f".format(frameMin)}, max: ${"%.2f".format(frameMax)})")
-
-                    onStatusUpdate?.invoke("Frame $framesSinceBeacon: $bit (avg: ${"%.1f".format(frameAverage)})")
+                    // Process this frame using vibration pattern recognition
+                    processFrame(currentFrameValues, framesSinceBeacon)
 
                     // Reset for next frame
                     frameStartTime = currentTime
@@ -184,7 +173,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
                     if (framesSinceBeacon == 7) {
                         // All frames processed, decode the character
-                        addLog("All frames collected: ${currentCharBits.toString()}")
                         decodeCharacter()
 
                         // Reset for next command
@@ -209,7 +197,35 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
             val varianceSum = magnitudeHistory.map { (it - baselineMagnitude).toDouble().pow(2) }.sum()
             magnitudeVariance = (varianceSum / magnitudeHistory.size).toFloat()
+
+            // Update energy baseline
+            baselineEnergy = magnitudeHistory.map { it * it }.average().toFloat()
         }
+    }
+
+    // Process a single frame using pattern recognition
+    private fun processFrame(frameData: List<Float>, frameIndex: Int) {
+        // Calculate energy in different segments of the frame
+        val segments = 5
+        val segmentSize = frameData.size / segments
+        val segmentEnergies = (0 until segments).map { segmentIndex ->
+            val start = segmentIndex * segmentSize
+            val end = minOf(start + segmentSize, frameData.size)
+            val segmentData = frameData.subList(start, end)
+            segmentData.map { it * it }.average().toFloat()
+        }
+
+        // Check for '1' bit pattern (vibration in middle segment)
+        // Pattern for '1': [400ms pause, 200ms vibration, 400ms pause]
+        val midSegmentIndex = segments / 2
+        val hasMidVibration = segmentEnergies[midSegmentIndex] > segmentEnergies.average() * 1.5f
+
+        // Detect '1' bit if middle segment has much higher energy
+        val bit = if (hasMidVibration) '1' else '0'
+        currentCharBits.append(bit)
+
+        addLog("Frame $frameIndex: $bit (energies: ${segmentEnergies.joinToString { it.format(1) }})")
+        onStatusUpdate?.invoke("Frame $frameIndex: $bit")
     }
 
     private fun decodeCharacter() {
@@ -252,6 +268,9 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     fun clearLogs() {
         logEntries.clear()
     }
+
+    // Extension function for formatting floats
+    private fun Float.format(digits: Int) = "%.${digits}f".format(this)
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 }
