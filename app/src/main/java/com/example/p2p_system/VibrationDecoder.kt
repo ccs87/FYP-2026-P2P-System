@@ -1,77 +1,52 @@
 package com.example.p2p_system
-
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
-import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlinx.coroutines.*
 import java.util.*
 
+data class AccelValue(val time: Long, val value: Float)
+
 class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventListener {
     private var onDecoded: ((Char) -> Unit)? = null
+    private var onPossibleCommands: ((List<Char>) -> Unit)? = null
     private var onAccelerationData: ((Float) -> Unit)? = null
     private var onTimeout: (() -> Unit)? = null
     private var onStatusUpdate: ((String) -> Unit)? = null
     private var timeoutJob: Job? = null
-
+    private var forcedDecodeJob: Job? = null
     private var isReceiving = false
-    private var currentCharBits = StringBuilder()
-    private var beaconDetected = false
-    private var framesSinceBeacon = 0
 
-    // Beacon detection variables
-    private var beaconStartTime = 0L
-    private var beaconEndTime = 0L
-    private var inBeacon = false
-
-    // Frame timing
-    private var frameStartTime = 0L
-    private val frameDuration = 1000L // ms
-    private var currentFrameValues = mutableListOf<Float>()
-
-    // Adaptive threshold
-    private val magnitudeHistory = LinkedList<Float>()
-    private val historySize = 50
-    private var baselineMagnitude = 0f
-    private var magnitudeVariance = 0f
-    private var baselineEnergy = 0f
-
-    // Logging
     private val logEntries = LinkedList<String>()
-    private val maxLogEntries = 100
+    private val maxLogEntries = 200
 
     var lastDecodedCommand: Char? = null
         private set
 
+    private val accelList = mutableListOf<AccelValue>()
+    private var startTime: Long = 0
+
     fun startListening(
         onDataReceived: (Char) -> Unit,
+        onPossibleCommands: (List<Char>) -> Unit,
         onAccelerationData: ((Float) -> Unit)? = null,
         onTimeout: (() -> Unit)? = null,
         onStatusUpdate: ((String) -> Unit)? = null,
-        timeoutMs: Long = 30000
+        timeoutMs: Long = 35000, // Increased timeout to account for forced decode
+        forcedDecodeDelayMs: Long = 25000 // Decode 25 seconds after starting (5s buffer + 20s pattern)
     ) {
         this.onDecoded = onDataReceived
+        this.onPossibleCommands = onPossibleCommands
         this.onAccelerationData = onAccelerationData
         this.onTimeout = onTimeout
         this.onStatusUpdate = onStatusUpdate
-
-        isReceiving = false
-        beaconDetected = false
-        framesSinceBeacon = 0
-        currentCharBits.clear()
-        beaconStartTime = 0L
-        beaconEndTime = 0L
-        inBeacon = false
-        frameStartTime = 0L
-        currentFrameValues.clear()
-        magnitudeHistory.clear()
-        baselineMagnitude = 0f
-        magnitudeVariance = 0f
-        baselineEnergy = 0f
+        isReceiving = true
+        accelList.clear()
         logEntries.clear()
+        startTime = System.currentTimeMillis()
 
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST)
@@ -79,23 +54,43 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         // Set timeout
         timeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(timeoutMs)
-            stopListening()
-            onTimeout?.invoke()
+            if (isReceiving) {
+                addLog("TIMEOUT: No valid pattern detected within ${timeoutMs}ms")
+                stopListening()
+                onStatusUpdate?.invoke("Timeout - no valid pattern detected")
+                onTimeout?.invoke()
+            }
         }
 
-        addLog("Started listening for vibrations")
-        onStatusUpdate?.invoke("Listening for commands...")
+        // AUTOMATIC FORCED DECODE - This is the key change!
+        forcedDecodeJob = CoroutineScope(Dispatchers.Main).launch {
+            addLog("SCHEDULED FORCED DECODE in ${forcedDecodeDelayMs}ms")
+            onStatusUpdate?.invoke("Waiting for transmission...")
+
+            delay(forcedDecodeDelayMs)
+
+            if (isReceiving) {
+                addLog("AUTOMATIC FORCED DECODE TRIGGERED - Analyzing collected data")
+                onStatusUpdate?.invoke("Analyzing vibration pattern...")
+                attemptDecode()
+            }
+        }
+
+        addLog("STARTED LISTENING - Timeout: ${timeoutMs}ms, Forced decode: ${forcedDecodeDelayMs}ms")
     }
 
     fun stopListening() {
         sensorManager.unregisterListener(this)
         timeoutJob?.cancel()
+        forcedDecodeJob?.cancel()
         isReceiving = false
-        addLog("Stopped listening")
+        addLog("STOPPED LISTENING")
         onStatusUpdate?.invoke("Stopped listening")
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
+        if (!isReceiving) return
+
         event?.let {
             val x = it.values[0]
             val y = it.values[1]
@@ -103,147 +98,223 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             val magnitude = sqrt(x * x + y * y + z * z)
             val currentTime = System.currentTimeMillis()
 
-            // Add to acceleration data for graphing
             onAccelerationData?.invoke(magnitude)
+            accelList.add(AccelValue(currentTime, magnitude))
 
-            // Update adaptive threshold
-            updateAdaptiveThreshold(magnitude)
-
-            // Calculate signal energy in current window
-            val recentValues = currentFrameValues.takeLast(10)
-            val signalEnergy = if (recentValues.isNotEmpty()) {
-                recentValues.map { it * it }.average().toFloat()
-            } else {
-                magnitude * magnitude
+            // Log high vibrations for debugging
+            if (magnitude > 12.0) {
+                val elapsed = currentTime - startTime
+                addLog("*** HIGH VIBRATION: ${magnitude.format(2)} at ${elapsed}ms ***")
             }
 
-            // Dynamic threshold with energy component
-            val dynamicThreshold = baselineMagnitude + 2.5f * sqrt(magnitudeVariance).toFloat()
-            val energyThreshold = baselineEnergy * 1.5f
-
-            // Log for debugging (less frequent to avoid spam)
-            if (System.currentTimeMillis() % 200 < 10) {
-                addLog("Mag: ${magnitude.format(2)}, Energy: ${signalEnergy.format(2)}, " +
-                        "Threshold: ${dynamicThreshold.format(2)}")
+            // Still do real-time analysis for status updates
+            if (accelList.size % 100 == 0) {
+                updateStatusBasedOnData()
             }
+        }
+    }
 
-            // Beacon detection using energy pattern
-            if (!beaconDetected && !isReceiving) {
-                if (!inBeacon && signalEnergy > energyThreshold) {
-                    // Vibration started - potential beacon beginning
-                    inBeacon = true
-                    beaconStartTime = currentTime
-                    addLog("Beacon vibration started (energy: ${signalEnergy.format(2)})")
-                }
-                else if (inBeacon && signalEnergy < energyThreshold * 0.7f) {
-                    // Vibration ended - check if it was a valid beacon
-                    inBeacon = false
-                    beaconEndTime = currentTime
-                    val beaconDuration = beaconEndTime - beaconStartTime
+    /**
+     * Update status based on collected data without attempting decode
+     */
+    private fun updateStatusBasedOnData() {
+        if (accelList.size < 50) return
 
-                    addLog("Beacon vibration ended, duration: ${beaconDuration}ms")
+        val recentData = accelList.takeLast(100)
+        val maxValue = recentData.maxOfOrNull { it.value } ?: 0f
+        val vibrationCount = recentData.count { it.value > 11.0f }
 
-                    // Pattern matching for beacon (200ms vibration surrounded by pauses)
-                    if (beaconDuration in 150..250) {
-                        // Valid beacon detected
-                        beaconDetected = true
-                        isReceiving = true
-                        framesSinceBeacon = 0
-                        currentCharBits.clear()
-                        frameStartTime = currentTime
-                        currentFrameValues.clear()
+        addLog("Data: ${accelList.size} points, Max: ${maxValue.format(2)}, Vibrations: $vibrationCount")
 
-                        addLog("BEACON DETECTED! Duration: ${beaconDuration}ms")
-                        onStatusUpdate?.invoke("Beacon detected! Receiving command...")
-                    }
-                }
-            } else if (isReceiving) {
-                // Collect data for the current frame
-                currentFrameValues.add(magnitude)
-
-                // Check if frame time has elapsed
-                if (currentTime - frameStartTime >= frameDuration) {
-                    // Process this frame using vibration pattern recognition
-                    processFrame(currentFrameValues, framesSinceBeacon)
-
-                    // Reset for next frame
-                    frameStartTime = currentTime
-                    currentFrameValues.clear()
-                    framesSinceBeacon++
-
-                    if (framesSinceBeacon == 7) {
-                        // All frames processed, decode the character
-                        decodeCharacter()
-
-                        // Reset for next command
-                        beaconDetected = false
-                        framesSinceBeacon = 0
-                        isReceiving = false
-                    }
+        // Update status based on vibration detection
+        when {
+            vibrationCount > 10 -> onStatusUpdate?.invoke("Strong vibrations detected - analyzing...")
+            vibrationCount > 5 -> onStatusUpdate?.invoke("Moderate vibrations detected")
+            vibrationCount > 0 -> onStatusUpdate?.invoke("Weak vibrations detected")
+            else -> {
+                val elapsed = System.currentTimeMillis() - startTime
+                if (elapsed > 10000) {
+                    onStatusUpdate?.invoke("Waiting for vibrations... (${elapsed/1000}s)")
                 }
             }
         }
     }
 
-    private fun updateAdaptiveThreshold(currentMagnitude: Float) {
-        magnitudeHistory.add(currentMagnitude)
-        if (magnitudeHistory.size > historySize) {
-            magnitudeHistory.removeFirst()
+    /**
+     * Main decoding function - called automatically after buffer time
+     */
+    private fun attemptDecode() {
+        if (accelList.size < 50) {
+            addLog("DECODE FAILED: Not enough data (${accelList.size} points)")
+            onStatusUpdate?.invoke("Insufficient data for decoding")
+            return
         }
 
-        if (magnitudeHistory.size >= 10) {
-            val sum = magnitudeHistory.sum()
-            baselineMagnitude = sum / magnitudeHistory.size
+        addLog("STARTING DECODE - ${accelList.size} data points collected")
+        onStatusUpdate?.invoke("Processing vibration data...")
 
-            val varianceSum = magnitudeHistory.map { (it - baselineMagnitude).toDouble().pow(2) }.sum()
-            magnitudeVariance = (varianceSum / magnitudeHistory.size).toFloat()
+        val binaryString = detectBitsFromVibrationPattern()
+        addLog("RAW BINARY DETECTED: $binaryString (${binaryString.length} bits)")
 
-            // Update energy baseline
-            baselineEnergy = magnitudeHistory.map { it * it }.average().toFloat()
-        }
-    }
-
-    // Process a single frame using pattern recognition
-    private fun processFrame(frameData: List<Float>, frameIndex: Int) {
-        // Calculate energy in different segments of the frame
-        val segments = 5
-        val segmentSize = frameData.size / segments
-        val segmentEnergies = (0 until segments).map { segmentIndex ->
-            val start = segmentIndex * segmentSize
-            val end = minOf(start + segmentSize, frameData.size)
-            val segmentData = frameData.subList(start, end)
-            segmentData.map { it * it }.average().toFloat()
-        }
-
-        // Check for '1' bit pattern (vibration in middle segment)
-        // Pattern for '1': [400ms pause, 200ms vibration, 400ms pause]
-        val midSegmentIndex = segments / 2
-        val hasMidVibration = segmentEnergies[midSegmentIndex] > segmentEnergies.average() * 1.5f
-
-        // Detect '1' bit if middle segment has much higher energy
-        val bit = if (hasMidVibration) '1' else '0'
-        currentCharBits.append(bit)
-
-        addLog("Frame $frameIndex: $bit (energies: ${segmentEnergies.joinToString { it.format(1) }})")
-        onStatusUpdate?.invoke("Frame $frameIndex: $bit")
-    }
-
-    private fun decodeCharacter() {
-        if (currentCharBits.length == 7) {
-            try {
-                val charCode = currentCharBits.toString().toInt(2)
-                val character = charCode.toChar()
-                lastDecodedCommand = character
-                addLog("Decoded command: '$character' (binary: ${currentCharBits.toString()})")
-                onStatusUpdate?.invoke("Decoded command: '$character'")
-                onDecoded?.invoke(character)
-            } catch (e: Exception) {
-                addLog("Error decoding command: ${e.message}")
-                onStatusUpdate?.invoke("Error decoding command: ${e.message}")
-            }
+        if (binaryString.length >= 21) {
+            findAndDecodeCommand(binaryString)
         } else {
-            addLog("Incomplete frame: ${currentCharBits.length} bits (expected: 7)")
-            onStatusUpdate?.invoke("Incomplete frame: ${currentCharBits.length} bits")
+            addLog("DECODE FAILED: Need 21 bits, got ${binaryString.length}")
+            onStatusUpdate?.invoke("Incomplete pattern detected (${binaryString.length}/21 bits)")
+
+            // Try partial decode anyway in case we have enough bits
+            if (binaryString.length >= 14) {
+                findAndDecodeCommand(binaryString)
+            }
+        }
+    }
+
+    /**
+     * Detect bits by analyzing vibration pattern in 1-second windows
+     */
+    private fun detectBitsFromVibrationPattern(): String {
+        val binary = StringBuilder()
+        val vibrationThreshold = 11.0f
+        val bitDuration = 1000L // 1 second per bit
+
+        if (accelList.isEmpty()) {
+            addLog("No data available for bit detection")
+            return ""
+        }
+
+        val startTimestamp = accelList.first().time
+        val totalDuration = accelList.last().time - startTimestamp
+        val expectedBits = (totalDuration / bitDuration).toInt().coerceAtLeast(1)
+
+        addLog("BIT DETECTION: Duration=${totalDuration}ms, Expected bits=${expectedBits}")
+
+        var bitsDetected = 0
+
+        for (bitIndex in 0 until expectedBits) {
+            val bitStartTime = startTimestamp + (bitIndex * bitDuration)
+            val bitEndTime = bitStartTime + bitDuration
+
+            val bitData = accelList.filter {
+                it.time >= bitStartTime && it.time < bitEndTime
+            }
+
+            if (bitData.isNotEmpty()) {
+                val maxInBit = bitData.maxOf { it.value }
+                val avgInBit = bitData.map { it.value }.average().toFloat()
+                val vibrationPoints = bitData.count { it.value > vibrationThreshold }
+
+                // A '1' bit should have significant vibrations in the middle
+                val isOne = vibrationPoints > 5 && maxInBit > vibrationThreshold
+
+                binary.append(if (isOne) "1" else "0")
+                bitsDetected++
+
+                addLog("Bit $bitIndex: max=${maxInBit.format(2)}, avg=${avgInBit.format(2)}, " +
+                        "vibrations=$vibrationPoints -> ${if (isOne) "1" else "0"}")
+            } else {
+                // No data in this time window, assume '0'
+                binary.append("0")
+                addLog("Bit $bitIndex: NO DATA -> 0")
+            }
+
+            // Stop if we have enough bits for a full command (21 bits)
+            if (bitsDetected >= 21) break
+        }
+
+        addLog("COMPLETED BIT DETECTION: $bitsDetected bits")
+        return binary.toString()
+    }
+
+    /**
+     * Find and decode command from binary string
+     */
+    private fun findAndDecodeCommand(binaryString: String) {
+        addLog("FINAL DECODE: Searching for pattern in ${binaryString.length} bits")
+
+        val startPattern = "0000010"
+        val endPattern = "0000011"
+        val commands = mutableListOf<Char>()
+        val validCommands = listOf('a', 'b', 'c')
+
+        // Search for start pattern followed by 7 data bits and end pattern
+        for (i in 0..binaryString.length - 21) {
+            val potentialStart = binaryString.substring(i, i + 7)
+
+            if (potentialStart == startPattern) {
+                // Check if we have enough bits for the full pattern
+                if (i + 21 <= binaryString.length) {
+                    val middleBits = binaryString.substring(i + 7, i + 14)
+                    val potentialEnd = binaryString.substring(i + 14, i + 21)
+
+                    if (potentialEnd == endPattern) {
+                        addLog("PATTERN FOUND at position $i: start=$potentialStart, data=$middleBits, end=$potentialEnd")
+
+                        try {
+                            val asciiCode = middleBits.toInt(2)
+                            val command = asciiCode.toChar()
+
+                            if (command in validCommands) {
+                                commands.add(command)
+                                addLog("✅ VALID COMMAND: '$command' (binary: $middleBits, ASCII: $asciiCode)")
+                            } else {
+                                addLog("❌ INVALID COMMAND: '$command' (not in $validCommands)")
+                            }
+                        } catch (e: Exception) {
+                            addLog("❌ BINARY DECODE ERROR: $middleBits - ${e.message}")
+                        }
+                    } else {
+                        addLog("END PATTERN MISMATCH: expected $endPattern, got $potentialEnd")
+                    }
+                }
+            }
+        }
+
+        // Handle decoding results
+        when {
+            commands.isEmpty() -> {
+                addLog("❌ DECODE FAILED: No valid commands found in pattern")
+                onStatusUpdate?.invoke("No valid payment command detected")
+                // Don't call onTimeout here - let the timeout handler deal with it
+            }
+            commands.size == 1 -> {
+                val command = commands.first()
+                addLog("🎉 SUCCESS: Single command '$command' decoded")
+                lastDecodedCommand = command
+                onStatusUpdate?.invoke("Payment command '$command' received!")
+                stopListening()
+                onDecoded?.invoke(command)
+            }
+            else -> {
+                addLog("⚠️ MULTIPLE COMMANDS: $commands")
+                onStatusUpdate?.invoke("Multiple commands detected - please select")
+                stopListening()
+                onPossibleCommands?.invoke(commands)
+            }
+        }
+    }
+
+    /**
+     * Manual decode trigger (for debug purposes)
+     */
+    fun manualDecode() {
+        if (isReceiving) {
+            addLog("MANUAL DECODE TRIGGERED")
+            attemptDecode()
+        }
+    }
+
+    /**
+     * Get current decoding status
+     */
+    fun getStatus(): String {
+        val elapsed = if (startTime > 0) (System.currentTimeMillis() - startTime) / 1000 else 0
+        return when {
+            !isReceiving -> "Not listening"
+            accelList.isEmpty() -> "No data collected (${elapsed}s)"
+            else -> {
+                val maxVal = accelList.maxOfOrNull { it.value }?.format(2) ?: "0.0"
+                "Collecting: ${accelList.size} points, max: $maxVal (${elapsed}s)"
+            }
         }
     }
 
@@ -252,25 +323,15 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         val logMessage = "[$timestamp] $message"
         logEntries.add(logMessage)
 
-        // Keep only the most recent log entries
         while (logEntries.size > maxLogEntries) {
             logEntries.removeFirst()
         }
 
-        // Also send to Android log
         Log.d("VibrationDecoder", logMessage)
     }
 
-    fun getLogs(): List<String> {
-        return logEntries.toList()
-    }
-
-    fun clearLogs() {
-        logEntries.clear()
-    }
-
-    // Extension function for formatting floats
+    fun getLogs(): List<String> = logEntries.toList()
+    fun clearLogs() { logEntries.clear() }
     private fun Float.format(digits: Int) = "%.${digits}f".format(this)
-
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 }
