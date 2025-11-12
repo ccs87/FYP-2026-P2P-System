@@ -1,3 +1,4 @@
+// File: 'app/src/main/java/com/example/p2p_system/VibrationContorller.kt'
 package com.example.p2p_system
 
 import android.Manifest
@@ -19,45 +20,32 @@ object VibrationController {
         if (vibrator?.hasVibrator() == true) {
             val totalPatternDuration = pattern.sum()
 
-            // Log the pattern details
             Log.d("VibrationController", "Pattern duration: ${totalPatternDuration}ms")
             Log.d("VibrationController", "Pattern: ${pattern.joinToString()}")
 
             vibrationJob = CoroutineScope(Dispatchers.Default).launch {
-                // Cancel any existing vibration first
                 withContext(Dispatchers.Main) {
                     vibrator.cancel()
                 }
-
-                // Short delay to ensure cancellation takes effect
                 delay(100)
 
                 withContext(Dispatchers.Main) {
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            // Create amplitudes array - vibrate only when pattern indicates vibration
                             val amplitudes = IntArray(pattern.size) { index ->
-                                // Only vibrate for the middle part of '1' bits (the 200ms duration)
-                                // In our pattern: for '1' we have [400(pause), 200(vibrate), 400(pause)]
-                                // So we need to identify which entries are the vibration parts
                                 var isVibration = false
                                 var currentIndex = 0
-
-                                // Simulate the pattern building to find vibration points
-                                for (bit in getBinaryPatternForCommand('a')) { // We use 'a' as reference
+                                for (bit in getBinaryPatternForCommand('a')) { // reference shape
                                     if (bit == '1') {
-                                        // For '1': positions currentIndex(pause), currentIndex+1(vibrate), currentIndex+2(pause)
                                         if (index == currentIndex + 1) {
                                             isVibration = true
                                             break
                                         }
                                         currentIndex += 3
                                     } else {
-                                        // For '0': position currentIndex(pause)
                                         currentIndex += 1
                                     }
                                 }
-
                                 if (isVibration) 255 else 0
                             }
 
@@ -67,12 +55,9 @@ object VibrationController {
                             Log.d("VibrationController", "Vibration started successfully")
                         } else {
                             @Suppress("DEPRECATION")
-                            // For older Android versions
                             val amplitudes = IntArray(pattern.size) { index ->
-                                // Same vibration detection logic
                                 var isVibration = false
                                 var currentIndex = 0
-
                                 for (bit in getBinaryPatternForCommand('a')) {
                                     if (bit == '1') {
                                         if (index == currentIndex + 1) {
@@ -84,18 +69,16 @@ object VibrationController {
                                         currentIndex += 1
                                     }
                                 }
-
                                 if (isVibration) 255 else 0
                             }
 
-                            // For API < 26, we need to create a pattern with on/off durations
                             val compatiblePattern = mutableListOf<Long>()
                             for (i in pattern.indices) {
                                 if (amplitudes[i] > 0) {
-                                    compatiblePattern.add(0) // No delay before vibration
-                                    compatiblePattern.add(pattern[i]) // Vibration duration
+                                    compatiblePattern.add(0)
+                                    compatiblePattern.add(pattern[i])
                                 } else {
-                                    compatiblePattern.add(pattern[i]) // Pause duration
+                                    compatiblePattern.add(pattern[i])
                                 }
                             }
 
@@ -113,12 +96,12 @@ object VibrationController {
         }
     }
 
-    // Helper function to get binary pattern for a command
+    // Helper function to get binary pattern for a command (5-bit start/end + 7-bit data = 17 bits)
     private fun getBinaryPatternForCommand(command: Char): String {
         val asciiCode = command.code
         val binaryString = asciiCode.toString(2).padStart(7, '0')
-        val startBinary = "0000010"
-        val endBinary = "0000011"
+        val startBinary = "00010"
+        val endBinary = "00011"
         return startBinary + binaryString + endBinary
     }
 

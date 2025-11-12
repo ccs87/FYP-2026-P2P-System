@@ -19,7 +19,7 @@ object ErrorHandler {
     fun validateLogin(username: String, password: String): String? {
         return when {
             username.isEmpty() || password.isEmpty() -> "Please enter username and password."
-            !AuthService.login(username, password) -> "Invalid credentials. Please try again."
+            !Database.login(username, password) -> "Invalid credentials. Please try again."
             else -> null
         }
     }
@@ -28,7 +28,7 @@ object ErrorHandler {
         return when {
             username.isEmpty() || password.isEmpty() -> "Please fill all fields."
             password != confirmPassword -> "Passwords don't match."
-            !AuthService.register(username, password) -> "Username already taken."
+            !Database.register(username, password) -> "Username already taken."
             else -> null
         }
     }
@@ -38,7 +38,7 @@ object ErrorHandler {
         return when {
             toUser.isEmpty() -> "Recipient username cannot be empty."
             parsedAmount == null || parsedAmount <= 0 -> "Invalid transfer amount."
-            !AuthService.transfer(fromUser, toUser, parsedAmount) -> "Transfer failed. Check balance or recipient username."
+            !Database.transfer(fromUser, toUser, parsedAmount) -> "Transfer failed. Check balance or recipient username."
             else -> null
         }
     }

@@ -1,4 +1,6 @@
+// File: 'app/src/main/java/com/example/p2p_system/VibrationDecoder.kt'
 package com.example.p2p_system
+
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -35,8 +37,8 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         onAccelerationData: ((Float) -> Unit)? = null,
         onTimeout: (() -> Unit)? = null,
         onStatusUpdate: ((String) -> Unit)? = null,
-        timeoutMs: Long = 35000, // Increased timeout to account for forced decode
-        forcedDecodeDelayMs: Long = 25000 // Decode 25 seconds after starting (5s buffer + 20s pattern)
+        timeoutMs: Long = 35000,
+        forcedDecodeDelayMs: Long = 25000
     ) {
         this.onDecoded = onDataReceived
         this.onPossibleCommands = onPossibleCommands
@@ -51,7 +53,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST)
 
-        // Set timeout
         timeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(timeoutMs)
             if (isReceiving) {
@@ -62,13 +63,10 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             }
         }
 
-        // AUTOMATIC FORCED DECODE - This is the key change!
         forcedDecodeJob = CoroutineScope(Dispatchers.Main).launch {
             addLog("SCHEDULED FORCED DECODE in ${forcedDecodeDelayMs}ms")
             onStatusUpdate?.invoke("Waiting for transmission...")
-
             delay(forcedDecodeDelayMs)
-
             if (isReceiving) {
                 addLog("AUTOMATIC FORCED DECODE TRIGGERED - Analyzing collected data")
                 onStatusUpdate?.invoke("Analyzing vibration pattern...")
@@ -101,22 +99,17 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             onAccelerationData?.invoke(magnitude)
             accelList.add(AccelValue(currentTime, magnitude))
 
-            // Log high vibrations for debugging
             if (magnitude > 12.0) {
                 val elapsed = currentTime - startTime
                 addLog("*** HIGH VIBRATION: ${magnitude.format(2)} at ${elapsed}ms ***")
             }
 
-            // Still do real-time analysis for status updates
             if (accelList.size % 100 == 0) {
                 updateStatusBasedOnData()
             }
         }
     }
 
-    /**
-     * Update status based on collected data without attempting decode
-     */
     private fun updateStatusBasedOnData() {
         if (accelList.size < 50) return
 
@@ -126,7 +119,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
         addLog("Data: ${accelList.size} points, Max: ${maxValue.format(2)}, Vibrations: $vibrationCount")
 
-        // Update status based on vibration detection
         when {
             vibrationCount > 10 -> onStatusUpdate?.invoke("Strong vibrations detected - analyzing...")
             vibrationCount > 5 -> onStatusUpdate?.invoke("Moderate vibrations detected")
@@ -140,9 +132,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         }
     }
 
-    /**
-     * Main decoding function - called automatically after buffer time
-     */
     private fun attemptDecode() {
         if (accelList.size < 50) {
             addLog("DECODE FAILED: Not enough data (${accelList.size} points)")
@@ -156,22 +145,17 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         val binaryString = detectBitsFromVibrationPattern()
         addLog("RAW BINARY DETECTED: $binaryString (${binaryString.length} bits)")
 
-        if (binaryString.length >= 21) {
+        if (binaryString.length >= 17) {
             findAndDecodeCommand(binaryString)
         } else {
-            addLog("DECODE FAILED: Need 21 bits, got ${binaryString.length}")
-            onStatusUpdate?.invoke("Incomplete pattern detected (${binaryString.length}/21 bits)")
-
-            // Try partial decode anyway in case we have enough bits
-            if (binaryString.length >= 14) {
+            addLog("DECODE FAILED: Need 17 bits, got ${binaryString.length}")
+            onStatusUpdate?.invoke("Incomplete pattern detected (${binaryString.length}/17 bits)")
+            if (binaryString.length >= 12) {
                 findAndDecodeCommand(binaryString)
             }
         }
     }
 
-    /**
-     * Detect bits by analyzing vibration pattern in 1-second windows
-     */
     private fun detectBitsFromVibrationPattern(): String {
         val binary = StringBuilder()
         val vibrationThreshold = 11.0f
@@ -203,49 +187,42 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                 val avgInBit = bitData.map { it.value }.average().toFloat()
                 val vibrationPoints = bitData.count { it.value > vibrationThreshold }
 
-                // A '1' bit should have significant vibrations in the middle
                 val isOne = vibrationPoints > 5 && maxInBit > vibrationThreshold
 
                 binary.append(if (isOne) "1" else "0")
                 bitsDetected++
 
-                addLog("Bit $bitIndex: max=${maxInBit.format(2)}, avg=${avgInBit.format(2)}, " +
-                        "vibrations=$vibrationPoints -> ${if (isOne) "1" else "0"}")
+                addLog(
+                    "Bit $bitIndex: max=${maxInBit.format(2)}, avg=${avgInBit.format(2)}, " +
+                            "vibrations=$vibrationPoints -> ${if (isOne) "1" else "0"}"
+                )
             } else {
-                // No data in this time window, assume '0'
                 binary.append("0")
                 addLog("Bit $bitIndex: NO DATA -> 0")
             }
 
-            // Stop if we have enough bits for a full command (21 bits)
-            if (bitsDetected >= 21) break
+            if (bitsDetected >= 17) break
         }
 
         addLog("COMPLETED BIT DETECTION: $bitsDetected bits")
         return binary.toString()
     }
 
-    /**
-     * Find and decode command from binary string
-     */
     private fun findAndDecodeCommand(binaryString: String) {
         addLog("FINAL DECODE: Searching for pattern in ${binaryString.length} bits")
 
-        val startPattern = "0000010"
-        val endPattern = "0000011"
+        val startPattern = "00010"  // 5-bit start
+        val endPattern = "00011"    // 5-bit end
         val commands = mutableListOf<Char>()
-        val validCommands = listOf('a', 'b', 'c')
+        val validCommands = listOf('a') // Only 'a' is valid now
 
-        // Search for start pattern followed by 7 data bits and end pattern
-        for (i in 0..binaryString.length - 21) {
-            val potentialStart = binaryString.substring(i, i + 7)
+        for (i in 0..binaryString.length - 17) {
+            val potentialStart = binaryString.substring(i, i + 5)
 
             if (potentialStart == startPattern) {
-                // Check if we have enough bits for the full pattern
-                if (i + 21 <= binaryString.length) {
-                    val middleBits = binaryString.substring(i + 7, i + 14)
-                    val potentialEnd = binaryString.substring(i + 14, i + 21)
-
+                if (i + 17 <= binaryString.length) {
+                    val middleBits = binaryString.substring(i + 5, i + 12)  // 7 data bits
+                    val potentialEnd = binaryString.substring(i + 12, i + 17)
                     if (potentialEnd == endPattern) {
                         addLog("PATTERN FOUND at position $i: start=$potentialStart, data=$middleBits, end=$potentialEnd")
 
@@ -269,12 +246,10 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             }
         }
 
-        // Handle decoding results
         when {
             commands.isEmpty() -> {
                 addLog("❌ DECODE FAILED: No valid commands found in pattern")
                 onStatusUpdate?.invoke("No valid payment command detected")
-                // Don't call onTimeout here - let the timeout handler deal with it
             }
             commands.size == 1 -> {
                 val command = commands.first()
@@ -293,9 +268,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         }
     }
 
-    /**
-     * Manual decode trigger (for debug purposes)
-     */
     fun manualDecode() {
         if (isReceiving) {
             addLog("MANUAL DECODE TRIGGERED")
@@ -303,9 +275,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         }
     }
 
-    /**
-     * Get current decoding status
-     */
     fun getStatus(): String {
         val elapsed = if (startTime > 0) (System.currentTimeMillis() - startTime) / 1000 else 0
         return when {

@@ -10,19 +10,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.p2p_system.ui.theme.P2PSystemTheme
-import androidx.navigation.NavHostController
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Prevent the app from sleeping
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
 
         enableEdgeToEdge()
         setContent {
@@ -39,6 +37,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+fun NavHostController.openHistory(username: String) = this.navigate("history/$username")
+fun NavHostController.openHome(username: String) = this.navigate("home/$username")
+
 @Composable
 fun AppNavigation(
     navController: NavHostController,
@@ -52,24 +53,44 @@ fun AppNavigation(
         composable("login") {
             LoginScreen(
                 onLoginSuccess = { username ->
-                    navController.navigate("home/$username")
+                    navController.openHome(username)
                 },
-                onRegisterClick = { navController.navigate("register") }
+                onRegisterClick = {
+                    navController.navigate("register")
+                }
             )
         }
+
         composable("register") {
             RegisterScreen(
                 onRegisterSuccess = {
-                    navController.popBackStack() // Go back to login after successful registration
+                    navController.popBackStack() // back to login
                 },
-                onBackToLogin = { navController.popBackStack() }
+                onBackToLogin = {
+                    navController.popBackStack() // back to login
+                }
             )
         }
+
         composable("home/{username}") { backStackEntry ->
-            val username = backStackEntry.arguments?.getString("username") ?: ""
+            val username = backStackEntry.arguments?.getString("username") ?: return@composable
             HomeMenu(
                 username = username,
-                onReturnToLogin = { navController.navigate("login") }
+                onReturnToLogin = {
+                    // return to login
+                    navController.popBackStack(route = "login", inclusive = false)
+                },
+                onOpenHistory = {
+                    navController.openHistory(username)
+                }
+            )
+        }
+
+        composable("history/{username}") { backStackEntry ->
+            val username = backStackEntry.arguments?.getString("username") ?: return@composable
+            PaymentHistoryScreen(
+                username = username,
+                onBack = { navController.popBackStack() }
             )
         }
     }
