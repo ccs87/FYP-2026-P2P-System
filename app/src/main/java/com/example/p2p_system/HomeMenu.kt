@@ -46,6 +46,10 @@ fun HomeMenu(
     val coroutineScope = rememberCoroutineScope()
     val otherUser = if (username == "test1") "test2" else "test1"
 
+    // Added: dialogs for picking command/amount
+    var showSendPicker by remember { mutableStateOf(false) }
+    var showLoopbackPicker by remember { mutableStateOf(false) }
+
     fun resetAllStates() {
         isListening = false
         isTransmitting = false
@@ -56,6 +60,8 @@ fun HomeMenu(
         possibleCommands = emptyList()
         vibrationDecoder.stopListening()
         VibrationController.cancelVibration(context)
+        showSendPicker = false
+        showLoopbackPicker = false
     }
 
     fun startListening() {
@@ -75,6 +81,10 @@ fun HomeMenu(
                         Database.transfer(otherUser, username, 100.0)
                         balance = Database.getBalance(username) ?: 0.0
                         transactionStatus = "Received \$100 from $otherUser"
+                    } else if (amount == 200) {
+                        Database.transfer(otherUser, username, 200.0)
+                        balance = Database.getBalance(username) ?: 0.0
+                        transactionStatus = "Received \$200 from $otherUser"
                     } else {
                         transactionStatus = "Unknown command received"
                     }
@@ -96,24 +106,25 @@ fun HomeMenu(
         )
     }
 
-    fun sendPayment() {
+    // Replaced: sender now takes an amount (mapped to command a/b)
+    fun sendPayment(amount: Int) {
         if (isTransmitting) return
-        val command = VibrationEncoder.getCommandForAmount(100) ?: run {
+        val command = VibrationEncoder.getCommandForAmount(amount) ?: run {
             transactionStatus = "Invalid amount"
             return
         }
         val pattern = VibrationEncoder.encodeCommand(command)
         transmittedPattern = generatePatternVisualization(pattern)
         isTransmitting = true
-        transactionStatus = "Sending \$100 to $otherUser..."
+        transactionStatus = "Sending \$$amount to $otherUser..."
 
         VibrationController.vibrate(context, pattern)
 
         coroutineScope.launch {
             delay(pattern.sum())
-            Database.transfer(username, otherUser, 100.0)
+            Database.transfer(username, otherUser, amount.toDouble())
             balance = Database.getBalance(username) ?: 0.0
-            transactionStatus = "Payment of \$100 sent to $otherUser"
+            transactionStatus = "Payment of \$$amount sent to $otherUser"
             isTransmitting = false
         }
     }
@@ -128,9 +139,10 @@ fun HomeMenu(
         VibrationController.cancelVibration(context)
         isTransmitting = false
         transactionStatus = "Transmission cancelled"
+        showSendPicker = false
+        showLoopbackPicker = false
     }
 
-    // New: one-phone loopback test (encode + vibrate, then listen/decode)
     fun loopbackTest(amount: Int = 100) {
         if (isListening || isTransmitting) return
 
@@ -150,7 +162,6 @@ fun HomeMenu(
         VibrationController.vibrate(context, pattern)
 
         coroutineScope.launch {
-            // Let the vibration start first, then begin listening
             delay(200L)
 
             isListening = true
@@ -182,7 +193,6 @@ fun HomeMenu(
                 forcedDecodeDelayMs = pattern.sum() + 2000L
             )
 
-            // When the waveform ends, mark transmission done, keep listening until decode/timeout
             delay(pattern.sum())
             isTransmitting = false
         }
@@ -219,22 +229,90 @@ fun HomeMenu(
         Spacer(Modifier.height(16.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { sendPayment() }, enabled = !isTransmitting && !isListening) {
-                Text("Send \$100")
+            // Changed: open picker instead of sending fixed \$100
+            Button(onClick = { showSendPicker = true }, enabled = !isTransmitting && !isListening) {
+                Text("Send")
             }
             Button(onClick = { startListening() }, enabled = !isListening && !isTransmitting) {
                 Text("Receive")
             }
         }
 
+        // Added: Send picker dialog (a=\$100, b=\$200)
+        if (showSendPicker) {
+            AlertDialog(
+                onDismissRequest = { showSendPicker = false },
+                title = { Text("Select payment command") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                showSendPicker = false
+                                sendPayment(100)
+                            },
+                            enabled = !isTransmitting && !isListening,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Command a → Send \$100") }
+
+                        Button(
+                            onClick = {
+                                showSendPicker = false
+                                sendPayment(200)
+                            },
+                            enabled = !isTransmitting && !isListening,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Command b → Send \$200") }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showSendPicker = false }) { Text("Cancel") }
+                }
+            )
+        }
+
         Spacer(Modifier.height(12.dp))
 
+        // Changed: open loopback picker instead of fixed 100
         Button(
-            onClick = { loopbackTest(100) },
+            onClick = { showLoopbackPicker = true },
             enabled = !isListening && !isTransmitting,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Loopback Test (Encode + Decode)")
+        }
+
+        // Added: Loopback picker dialog (a=\$100, b=\$200)
+        if (showLoopbackPicker) {
+            AlertDialog(
+                onDismissRequest = { showLoopbackPicker = false },
+                title = { Text("Select loopback command") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                showLoopbackPicker = false
+                                loopbackTest(100)
+                            },
+                            enabled = !isTransmitting && !isListening,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Test command a → \$100") }
+
+                        Button(
+                            onClick = {
+                                showLoopbackPicker = false
+                                loopbackTest(200)
+                            },
+                            enabled = !isTransmitting && !isListening,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Test command b → \$200") }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showLoopbackPicker = false }) { Text("Cancel") }
+                }
+            )
         }
 
         Spacer(Modifier.height(8.dp))
@@ -276,9 +354,6 @@ fun HomeMenu(
             )
             Spacer(Modifier.height(12.dp))
         }
-
-        // \-\-\- Removed: "Transmitted pattern preview" UI block \-\-\-
-        // (transmittedPattern is still stored for internal use; it is just no longer shown)
 
         Spacer(Modifier.weight(1f))
 

@@ -1,16 +1,18 @@
-// File: 'app/src/main/java/com/example/p2p_system/VibrationEncoder.kt'
+// File: `app/src/main/java/com/example/p2p_system/VibrationEncoder.kt`
 package com.example.p2p_system
 import android.util.Log
 
 object VibrationEncoder {
-    // Only command 'a' is supported now
+    // Supported commands
     private val commandMap = mapOf(
-        'a' to 100  // Pay $100
+        'a' to 100, // Pay $100
+        'b' to 200  // Pay $200
     )
 
     // Reverse mapping for decoding
     private val amountToCommand = mapOf(
-        100 to 'a'
+        100 to 'a',
+        200 to 'b'
     )
 
     fun getCommandForAmount(amount: Int): Char? {
@@ -49,7 +51,7 @@ object VibrationEncoder {
         val totalDuration = pattern.sum()
         Log.d("VibrationEncoder", "Generated pattern: ${pattern.joinToString()}")
         Log.d("VibrationEncoder", "Pattern entries: ${pattern.size}")
-        Log.d("VibrationEncoder", "Total duration: ${totalDuration}ms (${totalDuration/1000.0}s)")
+        Log.d("VibrationEncoder", "Total duration: ${totalDuration}ms (${totalDuration / 1000.0}s)")
 
         return pattern.toLongArray()
     }
