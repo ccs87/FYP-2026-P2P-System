@@ -1,3 +1,5 @@
+// File: `app/src/main/java/com/example/p2p_system/HomeMenu.kt`
+
 package com.example.p2p_system
 
 import android.content.Context
@@ -70,10 +72,9 @@ fun HomeMenu(
                     isListening = false
                     val amount = VibrationEncoder.getAmountForCommand(command)
                     if (amount == 100) {
-                        // Receiver logs: from otherUser -> username
                         Database.transfer(otherUser, username, 100.0)
                         balance = Database.getBalance(username) ?: 0.0
-                        transactionStatus = "Received $100 from $otherUser"
+                        transactionStatus = "Received \$100 from $otherUser"
                     } else {
                         transactionStatus = "Unknown command received"
                     }
@@ -83,7 +84,6 @@ fun HomeMenu(
                 possibleCommands = cmds
             },
             onAccelerationData = { value ->
-                // Keep last 400 points for the graph
                 accelerationData = (accelerationData + value).takeLast(400)
             },
             onTimeout = {
@@ -105,18 +105,15 @@ fun HomeMenu(
         val pattern = VibrationEncoder.encodeCommand(command)
         transmittedPattern = generatePatternVisualization(pattern)
         isTransmitting = true
-        transactionStatus = "Sending $100 to $otherUser..."
+        transactionStatus = "Sending \$100 to $otherUser..."
 
-        // Start device vibration
         VibrationController.vibrate(context, pattern)
 
-        // Simulate transaction completion after the waveform finishes
         coroutineScope.launch {
             delay(pattern.sum())
-            // Sender logs: from username -> otherUser
             Database.transfer(username, otherUser, 100.0)
             balance = Database.getBalance(username) ?: 0.0
-            transactionStatus = "Payment of $100 sent to $otherUser"
+            transactionStatus = "Payment of \$100 sent to $otherUser"
             isTransmitting = false
         }
     }
@@ -133,12 +130,69 @@ fun HomeMenu(
         transactionStatus = "Transmission cancelled"
     }
 
+    // New: one-phone loopback test (encode + vibrate, then listen/decode)
+    fun loopbackTest(amount: Int = 100) {
+        if (isListening || isTransmitting) return
+
+        val command = VibrationEncoder.getCommandForAmount(amount) ?: run {
+            transactionStatus = "Invalid amount"
+            return
+        }
+        val pattern = VibrationEncoder.encodeCommand(command)
+        transmittedPattern = generatePatternVisualization(pattern)
+
+        isTransmitting = true
+        transactionStatus = "Loopback: vibrating command '$command'..."
+        decodingStatus = ""
+        accelerationData = emptyList()
+        possibleCommands = emptyList()
+
+        VibrationController.vibrate(context, pattern)
+
+        coroutineScope.launch {
+            // Let the vibration start first, then begin listening
+            delay(200L)
+
+            isListening = true
+            decodingStatus = "Loopback: listening..."
+
+            vibrationDecoder.startListening(
+                onDataReceived = { decoded ->
+                    coroutineScope.launch {
+                        transactionStatus = "Loopback decoded: '$decoded'"
+                        isListening = false
+                        isTransmitting = false
+                    }
+                },
+                onPossibleCommands = { cmds ->
+                    possibleCommands = cmds
+                },
+                onAccelerationData = { value ->
+                    accelerationData = (accelerationData + value).takeLast(400)
+                },
+                onTimeout = {
+                    transactionStatus = "Loopback: decode timed out"
+                    isListening = false
+                    isTransmitting = false
+                },
+                onStatusUpdate = { status ->
+                    decodingStatus = status
+                },
+                timeoutMs = pattern.sum() + 12000L,
+                forcedDecodeDelayMs = pattern.sum() + 2000L
+            )
+
+            // When the waveform ends, mark transmission done, keep listening until decode/timeout
+            delay(pattern.sum())
+            isTransmitting = false
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -149,7 +203,6 @@ fun HomeMenu(
 
         Spacer(Modifier.height(8.dp))
 
-        // Balance
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = {
                 showBalance = !showBalance
@@ -159,13 +212,12 @@ fun HomeMenu(
             }
             if (showBalance) {
                 Spacer(Modifier.width(12.dp))
-                Text("Balance: $${"%.2f".format(balance)}")
+                Text("Balance: \$${"%.2f".format(balance)}")
             }
         }
 
         Spacer(Modifier.height(16.dp))
 
-        // Actions
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { sendPayment() }, enabled = !isTransmitting && !isListening) {
                 Text("Send \$100")
@@ -175,9 +227,18 @@ fun HomeMenu(
             }
         }
 
+        Spacer(Modifier.height(12.dp))
+
+        Button(
+            onClick = { loopbackTest(100) },
+            enabled = !isListening && !isTransmitting,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Loopback Test (Encode + Decode)")
+        }
+
         Spacer(Modifier.height(8.dp))
 
-        // Stop controls
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { stopTransmitting() }, enabled = isTransmitting) {
                 Text("Stop Transmission")
@@ -189,7 +250,6 @@ fun HomeMenu(
 
         Spacer(Modifier.height(16.dp))
 
-        // Status
         if (transactionStatus.isNotEmpty()) {
             Text(transactionStatus, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(6.dp))
@@ -199,13 +259,11 @@ fun HomeMenu(
             Spacer(Modifier.height(6.dp))
         }
 
-        // Possible commands (if multiple found)
         if (possibleCommands.isNotEmpty()) {
             Text("Possible commands: ${possibleCommands.joinToString()}", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
         }
 
-        // Graphs
         if (isListening && accelerationData.isNotEmpty()) {
             Text("Received vibration data", style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.height(4.dp))
@@ -219,22 +277,11 @@ fun HomeMenu(
             Spacer(Modifier.height(12.dp))
         }
 
-        if (transmittedPattern != null) {
-            Text("Transmitted pattern preview", style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.height(4.dp))
-            VibrationGraph(
-                data = transmittedPattern!!,
-                isTransmittedPattern = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-            )
-            Spacer(Modifier.height(12.dp))
-        }
+        // \-\-\- Removed: "Transmitted pattern preview" UI block \-\-\-
+        // (transmittedPattern is still stored for internal use; it is just no longer shown)
 
         Spacer(Modifier.weight(1f))
 
-        // Footer
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -274,7 +321,6 @@ fun VibrationGraph(
             )
         }
 
-        // Optional threshold indicator for received data
         if (!isTransmittedPattern) {
             val threshold = 11.0f
             val y = size.height - ((threshold - minValue) / range * size.height)

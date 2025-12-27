@@ -1,4 +1,3 @@
-// File: 'app/src/main/java/com/example/p2p_system/VibrationDecoder.kt'
 package com.example.p2p_system
 
 import android.hardware.Sensor
@@ -48,6 +47,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         isReceiving = true
         accelList.clear()
         logEntries.clear()
+        lastDecodedCommand = null
         startTime = System.currentTimeMillis()
 
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -71,6 +71,14 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                 addLog("AUTOMATIC FORCED DECODE TRIGGERED - Analyzing collected data")
                 onStatusUpdate?.invoke("Analyzing vibration pattern...")
                 attemptDecode()
+
+                // New: if forced decode finished and nothing valid was decoded, end immediately.
+                if (isReceiving && lastDecodedCommand == null) {
+                    addLog("FORCED DECODE COMPLETE: No valid command -> immediate timeout")
+                    stopListening()
+                    onStatusUpdate?.invoke("Timeout - no valid pattern detected")
+                    onTimeout?.invoke()
+                }
             }
         }
 
@@ -99,7 +107,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             onAccelerationData?.invoke(magnitude)
             accelList.add(AccelValue(currentTime, magnitude))
 
-            if (magnitude > 12.0) {
+            if (magnitude > 10.0) {
                 val elapsed = currentTime - startTime
                 addLog("*** HIGH VIBRATION: ${magnitude.format(2)} at ${elapsed}ms ***")
             }
@@ -126,7 +134,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             else -> {
                 val elapsed = System.currentTimeMillis() - startTime
                 if (elapsed > 10000) {
-                    onStatusUpdate?.invoke("Waiting for vibrations... (${elapsed/1000}s)")
+                    onStatusUpdate?.invoke("Waiting for vibrations... (${elapsed / 1000}s)")
                 }
             }
         }
@@ -158,7 +166,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
     private fun detectBitsFromVibrationPattern(): String {
         val binary = StringBuilder()
-        val vibrationThreshold = 11.0f
+        val vibrationThreshold = 10.2f
         val bitDuration = 1000L // 1 second per bit
 
         if (accelList.isEmpty()) {
