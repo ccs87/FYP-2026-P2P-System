@@ -8,7 +8,6 @@ import android.util.Log
 import kotlin.math.sqrt
 import kotlinx.coroutines.*
 import java.util.*
-import kotlin.invoke
 
 data class AccelValue(val time: Long, val value: Float)
 
@@ -226,7 +225,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
         // Fix: allow both supported commands
         val validCommands = listOf('a', 'b')
-
         for (i in 0..binaryString.length - 17) {
             val potentialStart = binaryString.substring(i, i + 5)
 

@@ -1,4 +1,3 @@
-// File: `app/src/main/java/com/example/p2p_system/VibrationEncoder.kt`
 package com.example.p2p_system
 import android.util.Log
 

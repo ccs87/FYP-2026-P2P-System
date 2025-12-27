@@ -1,4 +1,3 @@
-// File: 'app/src/main/java/com/example/p2p_system/VibrationContorller.kt'
 package com.example.p2p_system
 
 import android.Manifest
