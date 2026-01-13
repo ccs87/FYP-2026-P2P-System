@@ -1,5 +1,3 @@
-// File: `app/src/main/java/com/example/p2p_system/HomeMenu.kt`
-
 package com.example.p2p_system
 
 import android.content.Context
@@ -46,7 +44,6 @@ fun HomeMenu(
     val coroutineScope = rememberCoroutineScope()
     val otherUser = if (username == "test1") "test2" else "test1"
 
-    // Added: dialogs for picking command/amount
     var showSendPicker by remember { mutableStateOf(false) }
     var showLoopbackPicker by remember { mutableStateOf(false) }
 
@@ -106,7 +103,6 @@ fun HomeMenu(
         )
     }
 
-    // Replaced: sender now takes an amount (mapped to command a/b)
     fun sendPayment(amount: Int) {
         if (isTransmitting) return
         val command = VibrationEncoder.getCommandForAmount(amount) ?: run {
@@ -198,172 +194,178 @@ fun HomeMenu(
         }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Welcome, $username", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(onClick = onOpenHistory) { Text("Payment History") }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = {
-                showBalance = !showBalance
-                if (showBalance) balance = Database.getBalance(username) ?: 0.0
-            }) {
-                Text(if (showBalance) "Hide Balance" else "Show Balance")
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Welcome, $username", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = onOpenHistory) { Text("Payment History") }
             }
-            if (showBalance) {
-                Spacer(Modifier.width(12.dp))
-                Text("Balance: \$${"%.2f".format(balance)}")
-            }
-        }
 
-        Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            // Changed: open picker instead of sending fixed \$100
-            Button(onClick = { showSendPicker = true }, enabled = !isTransmitting && !isListening) {
-                Text("Send")
-            }
-            Button(onClick = { startListening() }, enabled = !isListening && !isTransmitting) {
-                Text("Receive")
-            }
-        }
-
-        // Added: Send picker dialog (a=\$100, b=\$200)
-        if (showSendPicker) {
-            AlertDialog(
-                onDismissRequest = { showSendPicker = false },
-                title = { Text("Select payment command") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                showSendPicker = false
-                                sendPayment(100)
-                            },
-                            enabled = !isTransmitting && !isListening,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Command a → Send \$100") }
-
-                        Button(
-                            onClick = {
-                                showSendPicker = false
-                                sendPayment(200)
-                            },
-                            enabled = !isTransmitting && !isListening,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Command b → Send \$200") }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { showSendPicker = false }) { Text("Cancel") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = {
+                    showBalance = !showBalance
+                    if (showBalance) balance = Database.getBalance(username) ?: 0.0
+                }) {
+                    Text(if (showBalance) "Hide Balance" else "Show Balance")
                 }
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // Changed: open loopback picker instead of fixed 100
-        Button(
-            onClick = { showLoopbackPicker = true },
-            enabled = !isListening && !isTransmitting,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Loopback Test (Encode + Decode)")
-        }
-
-        // Added: Loopback picker dialog (a=\$100, b=\$200)
-        if (showLoopbackPicker) {
-            AlertDialog(
-                onDismissRequest = { showLoopbackPicker = false },
-                title = { Text("Select loopback command") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                showLoopbackPicker = false
-                                loopbackTest(100)
-                            },
-                            enabled = !isTransmitting && !isListening,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Test command a → \$100") }
-
-                        Button(
-                            onClick = {
-                                showLoopbackPicker = false
-                                loopbackTest(200)
-                            },
-                            enabled = !isTransmitting && !isListening,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Test command b → \$200") }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { showLoopbackPicker = false }) { Text("Cancel") }
+                if (showBalance) {
+                    Spacer(Modifier.width(12.dp))
+                    Text("Balance: \$${"%.2f".format(balance)}")
                 }
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { stopTransmitting() }, enabled = isTransmitting) {
-                Text("Stop Transmission")
             }
-            Button(onClick = { stopListening() }, enabled = isListening) {
-                Text("Stop Listening")
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { showSendPicker = true }, enabled = !isTransmitting && !isListening) {
+                    Text("Send")
+                }
+                Button(onClick = { startListening() }, enabled = !isListening && !isTransmitting) {
+                    Text("Receive")
+                }
             }
-        }
 
-        Spacer(Modifier.height(16.dp))
+            if (showSendPicker) {
+                AlertDialog(
+                    onDismissRequest = { showSendPicker = false },
+                    title = { Text("Select payment command") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    showSendPicker = false
+                                    sendPayment(100)
+                                },
+                                enabled = !isTransmitting && !isListening,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Command a → Send \$100") }
 
-        if (transactionStatus.isNotEmpty()) {
-            Text(transactionStatus, style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(6.dp))
-        }
-        if (decodingStatus.isNotEmpty() && isListening) {
-            Text("Decoder: $decodingStatus", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(6.dp))
-        }
+                            Button(
+                                onClick = {
+                                    showSendPicker = false
+                                    sendPayment(200)
+                                },
+                                enabled = !isTransmitting && !isListening,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Command b → Send \$200") }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showSendPicker = false }) { Text("Cancel") }
+                    }
+                )
+            }
 
-        if (possibleCommands.isNotEmpty()) {
-            Text("Possible commands: ${possibleCommands.joinToString()}", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(6.dp))
-        }
-
-        if (isListening && accelerationData.isNotEmpty()) {
-            Text("Received vibration data", style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.height(4.dp))
-            VibrationGraph(
-                data = accelerationData,
-                isTransmittedPattern = false,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-            )
             Spacer(Modifier.height(12.dp))
+
+            Button(
+                onClick = { showLoopbackPicker = true },
+                enabled = !isListening && !isTransmitting,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Loopback Test (Encode + Decode)")
+            }
+
+            if (showLoopbackPicker) {
+                AlertDialog(
+                    onDismissRequest = { showLoopbackPicker = false },
+                    title = { Text("Select loopback command") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    showLoopbackPicker = false
+                                    loopbackTest(100)
+                                },
+                                enabled = !isTransmitting && !isListening,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Test command a → \$100") }
+
+                            Button(
+                                onClick = {
+                                    showLoopbackPicker = false
+                                    loopbackTest(200)
+                                },
+                                enabled = !isTransmitting && !isListening,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Test command b → \$200") }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showLoopbackPicker = false }) { Text("Cancel") }
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { stopTransmitting() }, enabled = isTransmitting) {
+                    Text("Stop Transmission")
+                }
+                Button(onClick = { stopListening() }, enabled = isListening) {
+                    Text("Stop Listening")
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            if (transactionStatus.isNotEmpty()) {
+                Text(transactionStatus, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(6.dp))
+            }
+            if (decodingStatus.isNotEmpty() && isListening) {
+                Text("Decoder: $decodingStatus", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (possibleCommands.isNotEmpty()) {
+                Text("Possible commands: ${possibleCommands.joinToString()}", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (isListening && accelerationData.isNotEmpty()) {
+                Text("Received vibration data", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                VibrationGraph(
+                    data = accelerationData,
+                    isTransmittedPattern = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(onClick = { resetAllStates() }) { Text("Reset") }
+                Button(onClick = onReturnToLogin) { Text("Return to Login") }
+            }
         }
 
-        Spacer(Modifier.weight(1f))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            TextButton(onClick = { resetAllStates() }) { Text("Reset") }
-            Button(onClick = onReturnToLogin) { Text("Return to Login") }
-        }
+        Text(
+            text = "© CCS87-CS4514, 2025-2026",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 56.dp)
+        )
     }
 }
 
