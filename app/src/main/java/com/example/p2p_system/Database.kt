@@ -7,8 +7,11 @@ import java.util.UUID
 
 data class User(
     val username: String,
-    val password: String
+    val password: String,
+    val isAdmin: Boolean = false
 )
+
+enum class UserStatus { ACTIVE, DEACTIVATED }
 
 enum class TransactionType { PAY, RECEIVE }
 
@@ -21,22 +24,40 @@ data class TransactionRecord(
     val note: String? = null
 )
 
+data class UserSnapshot(
+    val username: String,
+    val balance: Double,
+    val status: UserStatus,
+    val isAdmin: Boolean
+)
+
 object Database {
     // Pre-existing users for testing purposes
     private val users = mutableListOf(
         User(username = "test1", password = "1234"),
-        User(username = "test2", password = "1234")
+        User(username = "test2", password = "1234"),
+        // New: server administrator account
+        User(username = "admin1", password = "1234", isAdmin = true)
     )
 
     private val balances = mutableMapOf(
-        // default balances for testing purposes
         "test1" to 1000.0,
-        "test2" to 1000.0
+        "test2" to 1000.0,
+        // Admin exists but must not transact; balance is irrelevant but keep defined.
+        "admin1" to 0.0
+    )
+
+    // New: user status tracking
+    private val statuses = mutableMapOf(
+        "test1" to UserStatus.ACTIVE,
+        "test2" to UserStatus.ACTIVE,
+        "admin1" to UserStatus.ACTIVE
     )
 
     private val favorites = mutableMapOf(
-        "test1" to listOf("test2"), // test1's favorite list
-        "test2" to listOf("test1")  // test2's favorite list
+        "test1" to listOf("test2"),
+        "test2" to listOf("test1"),
+        "admin1" to emptyList()
     )
 
     // Transaction history (only $100 records are kept)
@@ -45,7 +66,6 @@ object Database {
     val recordsFlow: StateFlow<List<TransactionRecord>> = _recordsFlow.asStateFlow()
 
     init {
-        // Seed two default $100 records: one Pay and one Receive for the test users
         val now = System.currentTimeMillis()
         records.add(
             TransactionRecord(
@@ -72,16 +92,50 @@ object Database {
         _recordsFlow.value = records.sortedByDescending { it.timestamp }
     }
 
+    fun isAdmin(username: String): Boolean {
+        return users.firstOrNull { it.username == username }?.isAdmin == true
+    }
+
+    fun getStatus(username: String): UserStatus {
+        return statuses[username] ?: UserStatus.ACTIVE
+    }
+
+    fun setStatus(username: String, status: UserStatus): Boolean {
+        if (users.none { it.username == username }) return false
+        statuses[username] = status
+        return true
+    }
+
+    fun getAllUserSnapshots(): List<UserSnapshot> {
+        return users
+            .asSequence()
+            .sortedBy { it.username }
+            .map { u ->
+                UserSnapshot(
+                    username = u.username,
+                    balance = balances[u.username] ?: 0.0,
+                    status = statuses[u.username] ?: UserStatus.ACTIVE,
+                    isAdmin = u.isAdmin
+                )
+            }
+            .toList()
+    }
+
     fun register(username: String, password: String): Boolean {
         if (users.any { it.username == username }) return false
-        users.add(User(username, password))
+        users.add(User(username, password, isAdmin = false))
         balances[username] = 100.0
         favorites[username] = emptyList()
+        statuses[username] = UserStatus.ACTIVE
         return true
     }
 
     fun login(username: String, password: String): Boolean {
-        return users.any { it.username == username && it.password == password }
+        val user = users.firstOrNull { it.username == username } ?: return false
+        if (user.password != password) return false
+        // New: deactivated users cannot login (admin can reactivate them)
+        if ((statuses[username] ?: UserStatus.ACTIVE) == UserStatus.DEACTIVATED) return false
+        return true
     }
 
     fun getBalance(username: String): Double? {
@@ -90,6 +144,13 @@ object Database {
 
     // Only $100 transactions are logged in history; ignore other amounts.
     fun transfer(fromUser: String, toUser: String, amount: Double): Boolean {
+        // New: admin cannot perform transactions
+        if (isAdmin(fromUser) || isAdmin(toUser)) return false
+
+        // New: deactivated users cannot transact
+        if (getStatus(fromUser) != UserStatus.ACTIVE) return false
+        if (getStatus(toUser) != UserStatus.ACTIVE) return false
+
         val fromBalance = balances[fromUser] ?: return false
         val toBalance = balances[toUser] ?: return false
 
@@ -97,7 +158,6 @@ object Database {
             balances[fromUser] = fromBalance - amount
             balances[toUser] = toBalance + amount
 
-            // Always store as $100 in history (current system only transacts 100)
             records.add(
                 TransactionRecord(
                     timestamp = System.currentTimeMillis(),

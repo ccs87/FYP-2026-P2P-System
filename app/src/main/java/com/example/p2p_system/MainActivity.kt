@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
 
 fun NavHostController.openHistory(username: String) = this.navigate("history/$username")
 fun NavHostController.openHome(username: String) = this.navigate("home/$username")
+fun NavHostController.openAdminHome(username: String) = this.navigate("adminHome/$username")
 
 @Composable
 fun AppNavigation(
@@ -53,7 +54,11 @@ fun AppNavigation(
         composable("login") {
             LoginScreen(
                 onLoginSuccess = { username ->
-                    navController.openHome(username)
+                    if (Database.isAdmin(username)) {
+                        navController.openAdminHome(username)
+                    } else {
+                        navController.openHome(username)
+                    }
                 },
                 onRegisterClick = {
                     navController.navigate("register")
@@ -64,10 +69,10 @@ fun AppNavigation(
         composable("register") {
             RegisterScreen(
                 onRegisterSuccess = {
-                    navController.popBackStack() // back to login
+                    navController.popBackStack()
                 },
                 onBackToLogin = {
-                    navController.popBackStack() // back to login
+                    navController.popBackStack()
                 }
             )
         }
@@ -77,11 +82,21 @@ fun AppNavigation(
             HomeMenu(
                 username = username,
                 onReturnToLogin = {
-                    // return to login
                     navController.popBackStack(route = "login", inclusive = false)
                 },
                 onOpenHistory = {
                     navController.openHistory(username)
+                }
+            )
+        }
+
+        // New: admin home
+        composable("adminHome/{username}") { backStackEntry ->
+            val username = backStackEntry.arguments?.getString("username") ?: return@composable
+            AdminHomeMenu(
+                username = username,
+                onReturnToLogin = {
+                    navController.popBackStack(route = "login", inclusive = false)
                 }
             )
         }
