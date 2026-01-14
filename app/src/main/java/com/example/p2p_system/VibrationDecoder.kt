@@ -37,7 +37,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         onTimeout: (() -> Unit)? = null,
         onStatusUpdate: ((String) -> Unit)? = null,
         timeoutMs: Long = 35000,
-        forcedDecodeDelayMs: Long = 25000
+        forcedDecodeDelayMs: Long = 20000
     ) {
         this.onDecoded = onDataReceived
         this.onPossibleCommands = onPossibleCommands
@@ -107,7 +107,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             onAccelerationData?.invoke(magnitude)
             accelList.add(AccelValue(currentTime, magnitude))
 
-            if (magnitude > 10.0) {
+            if (magnitude > 9.66f) {
                 val elapsed = currentTime - startTime
                 addLog("*** HIGH VIBRATION: ${magnitude.format(2)} at ${elapsed}ms ***")
             }
@@ -166,7 +166,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
     private fun detectBitsFromVibrationPattern(): String {
         val binary = StringBuilder()
-        val vibrationThreshold = 10.2f
+        val vibrationThreshold = 9.66f
         val bitDuration = 1000L // 1 second per bit
 
         if (accelList.isEmpty()) {
@@ -241,12 +241,12 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
                             if (command in validCommands) {
                                 commands.add(command)
-                                addLog("✅ VALID COMMAND: '$command' (binary: $middleBits, ASCII: $asciiCode)")
+                                addLog("VALID COMMAND: '$command' (binary: $middleBits, ASCII: $asciiCode)")
                             } else {
-                                addLog("❌ INVALID COMMAND: '$command' (not in $validCommands)")
+                                addLog("INVALID COMMAND: '$command' (not in $validCommands)")
                             }
                         } catch (e: Exception) {
-                            addLog("❌ BINARY DECODE ERROR: $middleBits - ${e.message}")
+                            addLog("BINARY DECODE ERROR: $middleBits - ${e.message}")
                         }
                     } else {
                         addLog("END PATTERN MISMATCH: expected $endPattern, got $potentialEnd")
@@ -257,12 +257,12 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
         when {
             commands.isEmpty() -> {
-                addLog("❌ DECODE FAILED: No valid commands found in pattern")
+                addLog("DECODE FAILED: No valid commands found in pattern")
                 onStatusUpdate?.invoke("No valid payment command detected")
             }
             commands.size == 1 -> {
                 val command = commands.first()
-                addLog("🎉 SUCCESS: Single command '$command' decoded")
+                addLog("SUCCESS: Single command '$command' decoded")
                 lastDecodedCommand = command
                 onStatusUpdate?.invoke("Payment command '$command' received!")
                 stopListening()

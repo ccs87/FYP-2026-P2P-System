@@ -111,7 +111,6 @@ fun PaymentHistoryScreen(
                                 Text("Time: ${sdf.format(rec.timestamp)}")
                                 rec.note?.let {
                                     Spacer(Modifier.height(2.dp))
-                                    Text("Note: $it")
                                 }
                             }
                         }

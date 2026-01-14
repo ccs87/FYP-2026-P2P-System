@@ -3,6 +3,7 @@ package com.example.p2p_system
 import android.content.Context
 import android.hardware.SensorManager
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -34,8 +36,6 @@ fun HomeMenu(
     var isTransmitting by remember { mutableStateOf(false) }
 
     var accelerationData by remember { mutableStateOf<List<Float>>(emptyList()) }
-    var transmittedPattern by remember { mutableStateOf<List<Float>?>(null) }
-
     var possibleCommands by remember { mutableStateOf<List<Char>>(emptyList()) }
 
     var balance by remember { mutableStateOf(Database.getBalance(username) ?: 0.0) }
@@ -45,7 +45,7 @@ fun HomeMenu(
     val otherUser = if (username == "test1") "test2" else "test1"
 
     var showSendPicker by remember { mutableStateOf(false) }
-    var showLoopbackPicker by remember { mutableStateOf(false) }
+    var showTxnStatusDialog by remember { mutableStateOf(false) }
 
     fun resetAllStates() {
         isListening = false
@@ -53,12 +53,11 @@ fun HomeMenu(
         decodingStatus = ""
         transactionStatus = ""
         accelerationData = emptyList()
-        transmittedPattern = null
         possibleCommands = emptyList()
         vibrationDecoder.stopListening()
         VibrationController.cancelVibration(context)
         showSendPicker = false
-        showLoopbackPicker = false
+        showTxnStatusDialog = false
     }
 
     fun startListening() {
@@ -68,34 +67,39 @@ fun HomeMenu(
         isListening = true
         accelerationData = emptyList()
         possibleCommands = emptyList()
+        showTxnStatusDialog = true
 
         vibrationDecoder.startListening(
             onDataReceived = { command ->
-                coroutineScope.launch {
-                    isListening = false
-                    val amount = VibrationEncoder.getAmountForCommand(command)
-                    if (amount == 100) {
-                        Database.transfer(otherUser, username, 100.0)
-                        balance = Database.getBalance(username) ?: 0.0
-                        transactionStatus = "Received \$100 from $otherUser"
-                    } else if (amount == 200) {
-                        Database.transfer(otherUser, username, 200.0)
-                        balance = Database.getBalance(username) ?: 0.0
-                        transactionStatus = "Received \$200 from $otherUser"
+                val amount = VibrationEncoder.getAmountForCommand(command)
+                if (amount != null) {
+                    val ok = Database.transfer(otherUser, username, amount.toDouble())
+                    balance = Database.getBalance(username) ?: balance
+                    transactionStatus = if (ok) {
+                        "Received \$$amount from $otherUser"
                     } else {
-                        transactionStatus = "Unknown command received"
+                        "Receive failed"
                     }
+                } else {
+                    transactionStatus = "Unknown command received"
                 }
+                isListening = false
+                showTxnStatusDialog = true
             },
             onPossibleCommands = { cmds ->
                 possibleCommands = cmds
+                decodingStatus = "Multiple commands detected"
+                transactionStatus = "Select the correct command"
+                showTxnStatusDialog = true
             },
             onAccelerationData = { value ->
-                accelerationData = (accelerationData + value).takeLast(400)
+                accelerationData = (accelerationData + value).takeLast(250)
             },
             onTimeout = {
                 isListening = false
-                transactionStatus = "Listening timed out"
+                decodingStatus = "Timeout"
+                if (transactionStatus.isBlank()) transactionStatus = "Listening timed out"
+                showTxnStatusDialog = true
             },
             onStatusUpdate = { status ->
                 decodingStatus = status
@@ -110,18 +114,28 @@ fun HomeMenu(
             return
         }
         val pattern = VibrationEncoder.encodeCommand(command)
-        transmittedPattern = generatePatternVisualization(pattern)
+
+        accelerationData = emptyList()
+        possibleCommands = emptyList()
+        decodingStatus = ""
+
         isTransmitting = true
         transactionStatus = "Sending \$$amount to $otherUser..."
+        showTxnStatusDialog = true
 
         VibrationController.vibrate(context, pattern)
 
         coroutineScope.launch {
             delay(pattern.sum())
-            Database.transfer(username, otherUser, amount.toDouble())
-            balance = Database.getBalance(username) ?: 0.0
-            transactionStatus = "Payment of \$$amount sent to $otherUser"
+            val ok = Database.transfer(username, otherUser, amount.toDouble())
+            balance = Database.getBalance(username) ?: balance
+            transactionStatus = if (ok) {
+                "Payment of \$$amount sent to $otherUser"
+            } else {
+                "Payment failed"
+            }
             isTransmitting = false
+            showTxnStatusDialog = true
         }
     }
 
@@ -129,6 +143,8 @@ fun HomeMenu(
         vibrationDecoder.stopListening()
         isListening = false
         decodingStatus = "Stopped listening"
+        if (transactionStatus.isBlank()) transactionStatus = "Listening stopped"
+        showTxnStatusDialog = true
     }
 
     fun stopTransmitting() {
@@ -136,62 +152,65 @@ fun HomeMenu(
         isTransmitting = false
         transactionStatus = "Transmission cancelled"
         showSendPicker = false
-        showLoopbackPicker = false
+        showTxnStatusDialog = true
     }
 
-    fun loopbackTest(amount: Int = 100) {
-        if (isListening || isTransmitting) return
+    // Removed auto-dismiss: dialog stays open for pending and final results until user clicks Close/OK.
 
-        val command = VibrationEncoder.getCommandForAmount(amount) ?: run {
-            transactionStatus = "Invalid amount"
-            return
-        }
-        val pattern = VibrationEncoder.encodeCommand(command)
-        transmittedPattern = generatePatternVisualization(pattern)
-
-        isTransmitting = true
-        transactionStatus = "Loopback: vibrating command '$command'..."
-        decodingStatus = ""
-        accelerationData = emptyList()
-        possibleCommands = emptyList()
-
-        VibrationController.vibrate(context, pattern)
-
-        coroutineScope.launch {
-            delay(200L)
-
-            isListening = true
-            decodingStatus = "Loopback: listening..."
-
-            vibrationDecoder.startListening(
-                onDataReceived = { decoded ->
-                    coroutineScope.launch {
-                        transactionStatus = "Loopback decoded: '$decoded'"
-                        isListening = false
-                        isTransmitting = false
+    if (showTxnStatusDialog) {
+        val inProgress = isListening || isTransmitting
+        AlertDialog(
+            onDismissRequest = { /* keep open until Close/OK is clicked */ },
+            title = {
+                Text(
+                    text = when {
+                        isListening -> "Receiving"
+                        isTransmitting -> "Sending"
+                        else -> "Transaction Status"
                     }
-                },
-                onPossibleCommands = { cmds ->
-                    possibleCommands = cmds
-                },
-                onAccelerationData = { value ->
-                    accelerationData = (accelerationData + value).takeLast(400)
-                },
-                onTimeout = {
-                    transactionStatus = "Loopback: decode timed out"
-                    isListening = false
-                    isTransmitting = false
-                },
-                onStatusUpdate = { status ->
-                    decodingStatus = status
-                },
-                timeoutMs = pattern.sum() + 12000L,
-                forcedDecodeDelayMs = pattern.sum() + 2000L
-            )
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (transactionStatus.isNotBlank()) Text("Transaction: $transactionStatus")
+                    if (decodingStatus.isNotBlank()) Text("Status: $decodingStatus")
 
-            delay(pattern.sum())
-            isTransmitting = false
-        }
+                    if (isListening && accelerationData.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Vibration Graph", style = MaterialTheme.typography.bodyMedium)
+                        VibrationGraph(
+                            data = accelerationData,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(140.dp)
+                        )
+                    }
+
+                    if (possibleCommands.isNotEmpty()) {
+                        Text("Possible commands: ${possibleCommands.joinToString(", ")}")
+                    }
+                }
+            },
+            confirmButton = {
+                when {
+                    isListening -> {
+                        Button(onClick = { stopListening() }) { Text("Stop Listening") }
+                    }
+                    isTransmitting -> {
+                        Button(onClick = { stopTransmitting() }) { Text("Stop Sending") }
+                    }
+                    else -> {
+                        TextButton(onClick = { showTxnStatusDialog = false }) { Text("OK") }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showTxnStatusDialog = false },
+                    enabled = !inProgress
+                ) { Text("Close") }
+            }
+        )
     }
 
     Box(
@@ -199,163 +218,68 @@ fun HomeMenu(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
-                Text("Welcome, $username", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                TextButton(onClick = onOpenHistory) { Text("Payment History") }
-            }
+                Text(
+                    text = "Welcome, $username!",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f)
+                )
 
-            Spacer(Modifier.height(8.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = {
-                    showBalance = !showBalance
-                    if (showBalance) balance = Database.getBalance(username) ?: 0.0
-                }) {
-                    Text(if (showBalance) "Hide Balance" else "Show Balance")
-                }
-                if (showBalance) {
-                    Spacer(Modifier.width(12.dp))
-                    Text("Balance: \$${"%.2f".format(balance)}")
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { showSendPicker = true }, enabled = !isTransmitting && !isListening) {
-                    Text("Send")
-                }
-                Button(onClick = { startListening() }, enabled = !isListening && !isTransmitting) {
-                    Text("Receive")
-                }
-            }
-
-            if (showSendPicker) {
-                AlertDialog(
-                    onDismissRequest = { showSendPicker = false },
-                    title = { Text("Select payment command") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    showSendPicker = false
-                                    sendPayment(100)
-                                },
-                                enabled = !isTransmitting && !isListening,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Command a → Send \$100") }
-
-                            Button(
-                                onClick = {
-                                    showSendPicker = false
-                                    sendPayment(200)
-                                },
-                                enabled = !isTransmitting && !isListening,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Command b → Send \$200") }
-                        }
-                    },
-                    confirmButton = {},
-                    dismissButton = {
-                        TextButton(onClick = { showSendPicker = false }) { Text("Cancel") }
-                    }
+                Text(
+                    text = "Payment History",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.primary,
+                        textDecoration = TextDecoration.Underline
+                    ),
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clickable { onOpenHistory() }
                 )
             }
 
             Spacer(Modifier.height(12.dp))
 
-            Button(
-                onClick = { showLoopbackPicker = true },
-                enabled = !isListening && !isTransmitting,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Loopback Test (Encode + Decode)")
-            }
-
-            if (showLoopbackPicker) {
-                AlertDialog(
-                    onDismissRequest = { showLoopbackPicker = false },
-                    title = { Text("Select loopback command") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    showLoopbackPicker = false
-                                    loopbackTest(100)
-                                },
-                                enabled = !isTransmitting && !isListening,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Test command a → \$100") }
-
-                            Button(
-                                onClick = {
-                                    showLoopbackPicker = false
-                                    loopbackTest(200)
-                                },
-                                enabled = !isTransmitting && !isListening,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Test command b → \$200") }
-                        }
-                    },
-                    confirmButton = {},
-                    dismissButton = {
-                        TextButton(onClick = { showLoopbackPicker = false }) { Text("Cancel") }
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (showBalance) "Balance: \$${"%.2f".format(balance)}" else "Balance: ••••",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
                 )
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { stopTransmitting() }, enabled = isTransmitting) {
-                    Text("Stop Transmission")
-                }
-                Button(onClick = { stopListening() }, enabled = isListening) {
-                    Text("Stop Listening")
+                TextButton(onClick = {
+                    balance = Database.getBalance(username) ?: balance
+                    showBalance = !showBalance
+                }) {
+                    Text(if (showBalance) "Hide" else "Show")
                 }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            if (transactionStatus.isNotEmpty()) {
-                Text(transactionStatus, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(6.dp))
-            }
-            if (decodingStatus.isNotEmpty() && isListening) {
-                Text("Decoder: $decodingStatus", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(6.dp))
-            }
+            Button(
+                onClick = { showSendPicker = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isListening && !isTransmitting
+            ) { Text("Send Transaction") }
 
-            if (possibleCommands.isNotEmpty()) {
-                Text("Possible commands: ${possibleCommands.joinToString()}", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(6.dp))
-            }
+            Spacer(Modifier.height(10.dp))
 
-            if (isListening && accelerationData.isNotEmpty()) {
-                Text("Received vibration data", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                VibrationGraph(
-                    data = accelerationData,
-                    isTransmittedPattern = false,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp)
-                )
-                Spacer(Modifier.height(12.dp))
-            }
+            Button(
+                onClick = { startListening() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isListening && !isTransmitting
+            ) { Text("Receive Transaction") }
 
             Spacer(Modifier.weight(1f))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextButton(onClick = { resetAllStates() }) { Text("Reset") }
-                Button(onClick = onReturnToLogin) { Text("Return to Login") }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = {
+                    resetAllStates()
+                    onReturnToLogin()
+                }) { Text("Return to Login") }
             }
         }
 
@@ -365,6 +289,37 @@ fun HomeMenu(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 56.dp)
+        )
+    }
+
+    if (showSendPicker) {
+        AlertDialog(
+            onDismissRequest = { showSendPicker = false },
+            title = { Text("Send Payment") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Choose amount to send:")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                showSendPicker = false
+                                sendPayment(100)
+                            },
+                            enabled = !isTransmitting && !isListening
+                        ) { Text("\$100") }
+                        Button(
+                            onClick = {
+                                showSendPicker = false
+                                sendPayment(200)
+                            },
+                            enabled = !isTransmitting && !isListening
+                        ) { Text("\$200") }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSendPicker = false }) { Text("Close") }
+            }
         )
     }
 }
@@ -397,30 +352,5 @@ fun VibrationGraph(
                 strokeWidth = 2f
             )
         }
-
-        if (!isTransmittedPattern) {
-            val threshold = 11.0f
-            val y = size.height - ((threshold - minValue) / range * size.height)
-            drawLine(
-                color = Color.Red,
-                start = Offset(0f, y),
-                end = Offset(size.width, y),
-                strokeWidth = 1f
-            )
-        }
     }
-}
-
-fun generatePatternVisualization(pattern: LongArray, sampleMs: Long = 50L): List<Float> {
-    if (pattern.isEmpty()) return emptyList()
-    val vis = mutableListOf<Float>()
-    var vibratePhase = false
-    for (duration in pattern) {
-        val count = (duration / sampleMs).toInt().coerceAtLeast(1)
-        repeat(count) {
-            vis.add(if (vibratePhase) 1f else 0f)
-        }
-        vibratePhase = !vibratePhase
-    }
-    return vis
 }
