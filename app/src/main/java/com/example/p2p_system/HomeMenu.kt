@@ -228,17 +228,6 @@ fun HomeMenu(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f)
                 )
-
-                Text(
-                    text = "Payment History",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.primary,
-                        textDecoration = TextDecoration.Underline
-                    ),
-                    modifier = Modifier
-                        .padding(top = 6.dp)
-                        .clickable { onOpenHistory() }
-                )
             }
 
             Spacer(Modifier.height(12.dp))
@@ -273,23 +262,32 @@ fun HomeMenu(
                 enabled = !isListening && !isTransmitting
             ) { Text("Receive Transaction") }
 
+            Spacer(Modifier.height(10.dp))
+
+            Button(
+                onClick = { onOpenHistory() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isListening && !isTransmitting
+            ) { Text("Payment History") }
+
             Spacer(Modifier.weight(1f))
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "© CCS87-CS4514, 2025-2026",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+
                 Button(onClick = {
                     resetAllStates()
                     onReturnToLogin()
                 }) { Text("Return to Login") }
             }
         }
-
-        Text(
-            text = "© CCS87-CS4514, 2025-2026",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 56.dp)
-        )
     }
 
     if (showSendPicker) {

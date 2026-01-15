@@ -269,7 +269,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                 onDecoded?.invoke(command)
             }
             else -> {
-                addLog("⚠️ MULTIPLE COMMANDS: $commands")
+                addLog("MULTIPLE COMMANDS: $commands")
                 onStatusUpdate?.invoke("Multiple commands detected - please select")
                 stopListening()
                 onPossibleCommands?.invoke(commands)
