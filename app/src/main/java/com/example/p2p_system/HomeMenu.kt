@@ -3,7 +3,6 @@ package com.example.p2p_system
 import android.content.Context
 import android.hardware.SensorManager
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -12,11 +11,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
+
+private enum class TxAction { SEND, RECEIVE }
 
 @Composable
 fun HomeMenu(
@@ -47,6 +47,10 @@ fun HomeMenu(
     var showSendPicker by remember { mutableStateOf(false) }
     var showTxnStatusDialog by remember { mutableStateOf(false) }
 
+    // New: method picker shown before send/receive
+    var showMethodPicker by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<TxAction?>(null) }
+
     fun resetAllStates() {
         isListening = false
         isTransmitting = false
@@ -58,6 +62,8 @@ fun HomeMenu(
         VibrationController.cancelVibration(context)
         showSendPicker = false
         showTxnStatusDialog = false
+        showMethodPicker = false
+        pendingAction = null
     }
 
     fun startListening() {
@@ -155,8 +161,6 @@ fun HomeMenu(
         showTxnStatusDialog = true
     }
 
-    // Removed auto-dismiss: dialog stays open for pending and final results until user clicks Close/OK.
-
     if (showTxnStatusDialog) {
         val inProgress = isListening || isTransmitting
         AlertDialog(
@@ -249,7 +253,10 @@ fun HomeMenu(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { showSendPicker = true },
+                onClick = {
+                    pendingAction = TxAction.SEND
+                    showMethodPicker = true
+                },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isListening && !isTransmitting
             ) { Text("Send Transaction") }
@@ -257,7 +264,10 @@ fun HomeMenu(
             Spacer(Modifier.height(10.dp))
 
             Button(
-                onClick = { startListening() },
+                onClick = {
+                    pendingAction = TxAction.RECEIVE
+                    showMethodPicker = true
+                },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isListening && !isTransmitting
             ) { Text("Receive Transaction") }
@@ -288,6 +298,50 @@ fun HomeMenu(
                 }) { Text("Return to Login") }
             }
         }
+    }
+
+    // New: method picker dialog (shown before send/receive flows)
+    if (showMethodPicker) {
+        AlertDialog(
+            onDismissRequest = {
+                showMethodPicker = false
+                pendingAction = null
+            },
+            title = { Text("Select transaction method") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = {
+                            showMethodPicker = false
+                            when (pendingAction) {
+                                TxAction.SEND -> showSendPicker = true
+                                TxAction.RECEIVE -> startListening()
+                                null -> Unit
+                            }
+                            pendingAction = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isListening && !isTransmitting
+                    ) { Text("Without protection") }
+
+                    Button(
+                        onClick = {
+                            // No crypto implementation yet: just return to HomeMenu (close popup)
+                            showMethodPicker = false
+                            pendingAction = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isListening && !isTransmitting
+                    ) { Text("With cryptographic") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showMethodPicker = false
+                    pendingAction = null
+                }) { Text("Close") }
+            }
+        )
     }
 
     if (showSendPicker) {
