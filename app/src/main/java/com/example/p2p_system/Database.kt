@@ -20,7 +20,7 @@ data class TransactionRecord(
     val timestamp: Long,
     val fromUser: String,
     val toUser: String,
-    val amount: Double, // always 100.0 in history
+    val amount: Double, // store actual amount
     val note: String? = null
 )
 
@@ -60,7 +60,7 @@ object Database {
         "admin1" to emptyList()
     )
 
-    // Transaction history (only $100 records are kept)
+    // Transaction history
     private val records = mutableListOf<TransactionRecord>()
     private val _recordsFlow = MutableStateFlow<List<TransactionRecord>>(emptyList())
     val recordsFlow: StateFlow<List<TransactionRecord>> = _recordsFlow.asStateFlow()
@@ -73,7 +73,7 @@ object Database {
                 fromUser = "test1",
                 toUser = "test2",
                 amount = 100.0,
-                note = "Seed: test1 paid test2"
+                note = "test1 paid test2"
             )
         )
         records.add(
@@ -82,7 +82,7 @@ object Database {
                 fromUser = "test2",
                 toUser = "test1",
                 amount = 100.0,
-                note = "Seed: test2 paid test1"
+                note = "test2 paid test1"
             )
         )
         publish()
@@ -142,7 +142,6 @@ object Database {
         return balances[username]
     }
 
-    // Only $100 transactions are logged in history; ignore other amounts.
     fun transfer(fromUser: String, toUser: String, amount: Double): Boolean {
         // New: admin cannot perform transactions
         if (isAdmin(fromUser) || isAdmin(toUser)) return false
@@ -163,7 +162,7 @@ object Database {
                     timestamp = System.currentTimeMillis(),
                     fromUser = fromUser,
                     toUser = toUser,
-                    amount = 100.0,
+                    amount = amount, // Fix: store actual amount sent
                     note = null
                 )
             )

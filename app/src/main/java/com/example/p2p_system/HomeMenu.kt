@@ -2,8 +2,10 @@ package com.example.p2p_system
 
 import android.content.Context
 import android.hardware.SensorManager
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -11,6 +13,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,6 +56,12 @@ fun HomeMenu(
     var showMethodPicker by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<TxAction?>(null) }
 
+    // New: cryptographic setup (passphrase -> PBKDF2 -> 128-bit PSS key)
+    var showPassphraseDialog by remember { mutableStateOf(false) }
+    var passphrase by remember { mutableStateOf("") }
+    var passphraseError by remember { mutableStateOf("") }
+    val pssKeyState = remember { mutableStateOf<ByteArray?>(null) }
+
     fun resetAllStates() {
         isListening = false
         isTransmitting = false
@@ -60,10 +71,17 @@ fun HomeMenu(
         possibleCommands = emptyList()
         vibrationDecoder.stopListening()
         VibrationController.cancelVibration(context)
+
         showSendPicker = false
         showTxnStatusDialog = false
+
+        // New: reset crypto UI/state
         showMethodPicker = false
         pendingAction = null
+        showPassphraseDialog = false
+        passphrase = ""
+        passphraseError = ""
+        pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
     }
 
     fun startListening() {
@@ -78,34 +96,41 @@ fun HomeMenu(
         vibrationDecoder.startListening(
             onDataReceived = { command ->
                 val amount = VibrationEncoder.getAmountForCommand(command)
-                if (amount != null) {
-                    val ok = Database.transfer(otherUser, username, amount.toDouble())
-                    balance = Database.getBalance(username) ?: balance
-                    transactionStatus = if (ok) {
-                        "Received \$$amount from $otherUser"
-                    } else {
-                        "Receive failed"
-                    }
-                } else {
-                    transactionStatus = "Unknown command received"
+                if (amount == null) {
+                    decodingStatus = "Unknown command received: $command"
+                    showTxnStatusDialog = true
+                    return@startListening
                 }
+
+                val ok = Database.transfer(otherUser, username, amount.toDouble())
+                balance = Database.getBalance(username) ?: balance
+                decodingStatus =
+                    if (ok) "Received $$amount from $otherUser" else "Receive failed"
+                transactionStatus = decodingStatus
+                showTxnStatusDialog = true
+
                 isListening = false
+                vibrationDecoder.stopListening()
+
+                // Clear key after a completed receive attempt
+                pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+            },
+            onPossibleCommands = { commands ->
+                possibleCommands = commands
+                decodingStatus = "Multiple commands detected: ${commands.joinToString()}"
                 showTxnStatusDialog = true
             },
-            onPossibleCommands = { cmds ->
-                possibleCommands = cmds
-                decodingStatus = "Multiple commands detected"
-                transactionStatus = "Select the correct command"
-                showTxnStatusDialog = true
-            },
-            onAccelerationData = { value ->
-                accelerationData = (accelerationData + value).takeLast(250)
+            onAccelerationData = { magnitude ->
+                accelerationData = (accelerationData + magnitude).takeLast(300)
             },
             onTimeout = {
                 isListening = false
-                decodingStatus = "Timeout"
-                if (transactionStatus.isBlank()) transactionStatus = "Listening timed out"
+                decodingStatus = "Timeout - no valid pattern detected"
+                transactionStatus = decodingStatus
                 showTxnStatusDialog = true
+
+                // Clear key on timeout, best-effort
+                pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             },
             onStatusUpdate = { status ->
                 decodingStatus = status
@@ -115,10 +140,13 @@ fun HomeMenu(
 
     fun sendPayment(amount: Int) {
         if (isTransmitting) return
+
         val command = VibrationEncoder.getCommandForAmount(amount) ?: run {
             transactionStatus = "Invalid amount"
+            showTxnStatusDialog = true
             return
         }
+
         val pattern = VibrationEncoder.encodeCommand(command)
 
         accelerationData = emptyList()
@@ -126,22 +154,29 @@ fun HomeMenu(
         decodingStatus = ""
 
         isTransmitting = true
-        transactionStatus = "Sending \$$amount to $otherUser..."
+        transactionStatus = "Sending $$amount to $otherUser..."
         showTxnStatusDialog = true
 
         VibrationController.vibrate(context, pattern)
 
         coroutineScope.launch {
-            delay(pattern.sum())
-            val ok = Database.transfer(username, otherUser, amount.toDouble())
-            balance = Database.getBalance(username) ?: balance
-            transactionStatus = if (ok) {
-                "Payment of \$$amount sent to $otherUser"
-            } else {
-                "Payment failed"
+            delay(pattern.sum() + 800L)
+
+            if (isTransmitting) {
+                val ok = Database.transfer(username, otherUser, amount.toDouble())
+                balance = Database.getBalance(username) ?: balance
+                transactionStatus = if (ok) {
+                    "$username send $$amount to $otherUser"
+                }
+                else {
+                    "Payment failed"
+                }
+                isTransmitting = false
+                showTxnStatusDialog = true
+
+                // Clear key after a completed send attempt
+                pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             }
-            isTransmitting = false
-            showTxnStatusDialog = true
         }
     }
 
@@ -151,6 +186,9 @@ fun HomeMenu(
         decodingStatus = "Stopped listening"
         if (transactionStatus.isBlank()) transactionStatus = "Listening stopped"
         showTxnStatusDialog = true
+
+        // New: clear key when user stops
+        pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
     }
 
     fun stopTransmitting() {
@@ -159,93 +197,109 @@ fun HomeMenu(
         transactionStatus = "Transmission cancelled"
         showSendPicker = false
         showTxnStatusDialog = true
+
+        // New: clear key when user stops
+        pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+    }
+
+    fun beginSelectedFlowWithoutProtection() {
+        when (pendingAction) {
+            TxAction.SEND -> showSendPicker = true
+            TxAction.RECEIVE -> startListening()
+            null -> {}
+        }
+        pendingAction = null
+    }
+
+    fun beginSelectedFlowWithCrypto() {
+        // Step 1 only: establish PSS key via passphrase popup
+        // After key is derived, continue into the existing send/receive flow unchanged.
+        showPassphraseDialog = true
     }
 
     if (showTxnStatusDialog) {
         val inProgress = isListening || isTransmitting
         AlertDialog(
-            onDismissRequest = { /* keep open until Close/OK is clicked */ },
-            title = {
-                Text(
-                    text = when {
-                        isListening -> "Receiving"
-                        isTransmitting -> "Sending"
-                        else -> "Transaction Status"
-                    }
-                )
+            onDismissRequest = {
+                if (!inProgress) {
+                    showTxnStatusDialog = false
+                }
             },
+            title = { Text("Transaction Status") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (transactionStatus.isNotBlank()) Text("Transaction: $transactionStatus")
-                    if (decodingStatus.isNotBlank()) Text("Status: $decodingStatus")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (transactionStatus.isNotBlank()) Text(transactionStatus)
+                    if (decodingStatus.isNotBlank()) Text(decodingStatus)
 
-                    if (isListening && accelerationData.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text("Vibration Graph", style = MaterialTheme.typography.bodyMedium)
+                    if (accelerationData.isNotEmpty()) {
+                        Text("Vibration Data", fontWeight = FontWeight.SemiBold)
                         VibrationGraph(
                             data = accelerationData,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(140.dp)
+                                .height(120.dp)
                         )
                     }
 
                     if (possibleCommands.isNotEmpty()) {
-                        Text("Possible commands: ${possibleCommands.joinToString(", ")}")
+                        Text("Possible Commands: ${possibleCommands.joinToString()}")
                     }
                 }
             },
             confirmButton = {
-                when {
-                    isListening -> {
-                        Button(onClick = { stopListening() }) { Text("Stop Listening") }
+                TextButton(
+                    onClick = {
+                        if (!inProgress) {
+                            showTxnStatusDialog = false
+                        }
                     }
-                    isTransmitting -> {
-                        Button(onClick = { stopTransmitting() }) { Text("Stop Sending") }
-                    }
-                    else -> {
-                        TextButton(onClick = { showTxnStatusDialog = false }) { Text("OK") }
-                    }
-                }
+                ) { Text("OK") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { showTxnStatusDialog = false },
-                    enabled = !inProgress
-                ) { Text("Close") }
+                if (inProgress) {
+                    TextButton(
+                        onClick = {
+                            if (isListening) stopListening()
+                            if (isTransmitting) stopTransmitting()
+                        }
+                    ) { Text("Stop") }
+                }
             }
         )
     }
+
+    // Keep buttons visually consistent (same implementation + same colors)
+    val primaryButtonColors = ButtonDefaults.buttonColors()
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top
-            ) {
-                Text(
-                    text = "Welcome, $username!",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f)
-                )
-            }
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+        ) {
+            Text(
+                text = "Welcome, $username!",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
 
             Spacer(Modifier.height(12.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text(
-                    text = if (showBalance) "Balance: \$${"%.2f".format(balance)}" else "Balance: ••••",
-                    style = MaterialTheme.typography.bodyLarge,
+                    text = if (showBalance) "Balance: \$${"%.2f".format(balance)}" else "Balance: \u2022\u2022\u2022\u2022",
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = {
-                    balance = Database.getBalance(username) ?: balance
-                    showBalance = !showBalance
-                }) {
+
+                TextButton(onClick = { showBalance = !showBalance }) {
                     Text(if (showBalance) "Hide" else "Show")
                 }
             }
@@ -257,8 +311,8 @@ fun HomeMenu(
                     pendingAction = TxAction.SEND
                     showMethodPicker = true
                 },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isListening && !isTransmitting
+                colors = primaryButtonColors,
+                modifier = Modifier.fillMaxWidth()
             ) { Text("Send Transaction") }
 
             Spacer(Modifier.height(10.dp))
@@ -268,78 +322,133 @@ fun HomeMenu(
                     pendingAction = TxAction.RECEIVE
                     showMethodPicker = true
                 },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isListening && !isTransmitting
+                colors = primaryButtonColors,
+                modifier = Modifier.fillMaxWidth()
             ) { Text("Receive Transaction") }
 
             Spacer(Modifier.height(10.dp))
 
+            // Fix: make Payment History use the same Button style as the other two
             Button(
-                onClick = { onOpenHistory() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isListening && !isTransmitting
+                onClick = onOpenHistory,
+                colors = primaryButtonColors,
+                modifier = Modifier.fillMaxWidth()
             ) { Text("Payment History") }
-
-            Spacer(Modifier.weight(1f))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "© CCS87-CS4514, 2025-2026",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Button(onClick = {
-                    resetAllStates()
-                    onReturnToLogin()
-                }) { Text("Return to Login") }
-            }
         }
+
+        // Bottom-left trademark
+        Text(
+            text = "© CCS87-CS4514, 2025-2026",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(bottom = 10.dp)
+        )
+
+        // Bottom-right return to login
+        Button(
+            onClick = {
+                resetAllStates()
+                onReturnToLogin()
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 8.dp)
+        ) { Text("Return to Login") }
     }
 
-    // New: method picker dialog (shown before send/receive flows)
+    // Method picker dialog (shown before send/receive flows)
     if (showMethodPicker) {
         AlertDialog(
-            onDismissRequest = {
-                showMethodPicker = false
-                pendingAction = null
-            },
-            title = { Text("Select transaction method") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            onDismissRequest = { showMethodPicker = false },
+            title = { Text("Select Transaction Method") },
+            text = { Text("Choose whether to use the original method or the cryptographic method.") },
+            confirmButton = {
+                Column {
                     Button(
                         onClick = {
                             showMethodPicker = false
-                            when (pendingAction) {
-                                TxAction.SEND -> showSendPicker = true
-                                TxAction.RECEIVE -> startListening()
-                                null -> Unit
-                            }
-                            pendingAction = null
+                            beginSelectedFlowWithoutProtection()
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isListening && !isTransmitting
-                    ) { Text("Without protection") }
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Without Protection") }
+
+                    Spacer(Modifier.height(8.dp))
 
                     Button(
                         onClick = {
-                            // No crypto implementation yet: just return to HomeMenu (close popup)
                             showMethodPicker = false
-                            pendingAction = null
+                            beginSelectedFlowWithCrypto()
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isListening && !isTransmitting
-                    ) { Text("With cryptographic") }
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("With Cryptographic") }
+                }
+            }
+        )
+    }
+
+    // New: Passphrase dialog for crypto setup (PSS key derivation)
+    if (showPassphraseDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showPassphraseDialog = false
+                passphrase = ""
+                passphraseError = ""
+                pendingAction = null
+                pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+            },
+            title = { Text("Enter Passphrase") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = passphrase,
+                        onValueChange = {
+                            passphrase = it
+                            if (passphraseError.isNotBlank()) passphraseError = ""
+                        },
+                        label = { Text("Passphrase") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (passphraseError.isNotBlank()) {
+                        Text(passphraseError, color = MaterialTheme.colorScheme.error)
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showMethodPicker = false
-                    pendingAction = null
-                }) { Text("Close") }
+                Button(
+                    onClick = {
+                        val p = passphrase.trim()
+                        if (p.isBlank()) {
+                            passphraseError = "Passphrase cannot be empty"
+                            return@Button
+                        }
+
+                        try {
+                            pssKeyState.value = LightweightCrypto.derivePssKey(p)
+                            showPassphraseDialog = false
+                            passphrase = ""
+                            passphraseError = ""
+                            beginSelectedFlowWithoutProtection()
+                        } catch (e: Exception) {
+                            passphraseError = e.message ?: "Failed to derive key"
+                            Log.e("HomeMenu", "Key derivation error: ${e.message}")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showPassphraseDialog = false
+                        passphrase = ""
+                        passphraseError = ""
+                        pendingAction = null
+                        pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+                    }
+                ) { Text("Cancel") }
             }
         )
     }
@@ -347,30 +456,33 @@ fun HomeMenu(
     if (showSendPicker) {
         AlertDialog(
             onDismissRequest = { showSendPicker = false },
-            title = { Text("Send Payment") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Choose amount to send:")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                showSendPicker = false
-                                sendPayment(100)
-                            },
-                            enabled = !isTransmitting && !isListening
-                        ) { Text("\$100") }
-                        Button(
-                            onClick = {
-                                showSendPicker = false
-                                sendPayment(200)
-                            },
-                            enabled = !isTransmitting && !isListening
-                        ) { Text("\$200") }
-                    }
+            title = { Text("Send Transaction") },
+            text = { Text("Select amount to send") },
+            confirmButton = {
+                Column {
+                    Button(
+                        onClick = {
+                            showSendPicker = false
+                            sendPayment(100)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Send \$100") }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            showSendPicker = false
+                            sendPayment(200)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Send \$200") }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showSendPicker = false }) { Text("Close") }
+            dismissButton = {
+                TextButton(
+                    onClick = { showSendPicker = false }
+                ) { Text("Cancel") }
             }
         )
     }

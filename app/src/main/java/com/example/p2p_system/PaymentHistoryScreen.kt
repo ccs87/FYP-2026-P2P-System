@@ -1,5 +1,3 @@
-// File: `app/src/main/java/com/example/p2p_system/PaymentHistoryScreen.kt`
-
 package com.example.p2p_system
 
 import androidx.compose.foundation.layout.*
@@ -31,10 +29,11 @@ fun PaymentHistoryScreen(
         val otherParty = if (rec.fromUser == username) rec.toUser else rec.fromUser
         val typeText = if (rec.fromUser == username) "pay" else "receive"
         val dateText = sdf.format(rec.timestamp).lowercase(Locale.getDefault())
+        val amountText = if (rec.amount % 1.0 == 0.0) "%.0f".format(rec.amount) else "%.2f".format(rec.amount)
         return listOf(
             otherParty.lowercase(Locale.getDefault()),
             typeText,
-            "100",
+            amountText,
             dateText,
             rec.note?.lowercase(Locale.getDefault()) ?: ""
         ).any { it.contains(query) }
@@ -107,7 +106,7 @@ fun PaymentHistoryScreen(
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text("Party: $otherParty")
-                                Text("Amount: $100")
+                                Text("Amount: \$${if (rec.amount % 1.0 == 0.0) "%.0f".format(rec.amount) else "%.2f".format(rec.amount)}")
                                 Text("Time: ${sdf.format(rec.timestamp)}")
                                 rec.note?.let {
                                     Spacer(Modifier.height(2.dp))
