@@ -403,7 +403,7 @@ fun HomeMenu(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(bottom = 10.dp)
+                .padding(bottom = 12.dp)
         )
 
         Button(
