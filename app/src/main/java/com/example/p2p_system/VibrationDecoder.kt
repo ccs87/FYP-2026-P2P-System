@@ -17,7 +17,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private var onAccelerationData: ((Float) -> Unit)? = null
     private var onTimeout: (() -> Unit)? = null
     private var onStatusUpdate: ((String) -> Unit)? = null
-    private var timeoutJob: Job? = null
     private var forcedDecodeJob: Job? = null
     private var isReceiving = false
 
@@ -36,7 +35,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         onAccelerationData: ((Float) -> Unit)? = null,
         onTimeout: (() -> Unit)? = null,
         onStatusUpdate: ((String) -> Unit)? = null,
-        timeoutMs: Long = 35000,
         forcedDecodeDelayMs: Long = 20000
     ) {
         this.onDecoded = onDataReceived
@@ -53,41 +51,29 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST)
 
-        timeoutJob = CoroutineScope(Dispatchers.Main).launch {
-            delay(timeoutMs)
-            if (isReceiving) {
-                addLog("TIMEOUT: No valid pattern detected within ${timeoutMs}ms")
-                stopListening()
-                onStatusUpdate?.invoke("Timeout - no valid pattern detected")
-                onTimeout?.invoke()
-            }
-        }
-
         forcedDecodeJob = CoroutineScope(Dispatchers.Main).launch {
             addLog("SCHEDULED FORCED DECODE in ${forcedDecodeDelayMs}ms")
             onStatusUpdate?.invoke("Waiting for transmission...")
             delay(forcedDecodeDelayMs)
             if (isReceiving) {
-                addLog("AUTOMATIC FORCED DECODE TRIGGERED - Analyzing collected data")
                 onStatusUpdate?.invoke("Analyzing vibration pattern...")
                 attemptDecode()
 
-                // New: if forced decode finished and nothing valid was decoded, end immediately.
+                // If forced decode finished and nothing valid was decoded, end immediately.
                 if (isReceiving && lastDecodedCommand == null) {
-                    addLog("FORCED DECODE COMPLETE: No valid command -> immediate timeout")
+                    addLog("FORCED DECODE COMPLETE: No valid command \u2192 timeout")
+                    onStatusUpdate?.invoke("Timeout \u002D no valid pattern detected")
                     stopListening()
-                    onStatusUpdate?.invoke("Timeout - no valid pattern detected")
                     onTimeout?.invoke()
                 }
             }
         }
 
-        addLog("STARTED LISTENING - Timeout: ${timeoutMs}ms, Forced decode: ${forcedDecodeDelayMs}ms")
+        addLog("STARTED LISTENING \u002D Forced decode: ${forcedDecodeDelayMs}ms")
     }
 
     fun stopListening() {
         sensorManager.unregisterListener(this)
-        timeoutJob?.cancel()
         forcedDecodeJob?.cancel()
         isReceiving = false
         addLog("STOPPED LISTENING")
@@ -128,7 +114,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         addLog("Data: ${accelList.size} points, Max: ${maxValue.format(2)}, Vibrations: $vibrationCount")
 
         when {
-            vibrationCount > 10 -> onStatusUpdate?.invoke("Strong vibrations detected - analyzing...")
+            vibrationCount > 10 -> onStatusUpdate?.invoke("Strong vibrations detected \u002D analyzing...")
             vibrationCount > 5 -> onStatusUpdate?.invoke("Moderate vibrations detected")
             vibrationCount > 0 -> onStatusUpdate?.invoke("Weak vibrations detected")
             else -> {
@@ -147,7 +133,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             return
         }
 
-        addLog("STARTING DECODE - ${accelList.size} data points collected")
+        addLog("STARTING DECODE \u002D ${accelList.size} data points collected")
         onStatusUpdate?.invoke("Processing vibration data...")
 
         val binaryString = detectBitsFromVibrationPattern()
@@ -201,12 +187,11 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                 bitsDetected++
 
                 addLog(
-                    "Bit $bitIndex: max=${maxInBit.format(2)}, avg=${avgInBit.format(2)}, " +
-                            "vibrations=$vibrationPoints -> ${if (isOne) "1" else "0"}"
+                    "Bit $bitIndex: max=${maxInBit.format(2)}, avg=${avgInBit.format(2)}, vibPts=$vibrationPoints \u2192 ${if (isOne) "1" else "0"}"
                 )
             } else {
                 binary.append("0")
-                addLog("Bit $bitIndex: NO DATA -> 0")
+                addLog("Bit $bitIndex: NO DATA \u2192 0")
             }
 
             if (bitsDetected >= 17) break
@@ -233,23 +218,14 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                     val middleBits = binaryString.substring(i + 5, i + 12)  // 7 data bits
                     val potentialEnd = binaryString.substring(i + 12, i + 17)
                     if (potentialEnd == endPattern) {
-                        addLog("PATTERN FOUND at position $i: start=$potentialStart, data=$middleBits, end=$potentialEnd")
-
-                        try {
-                            val asciiCode = middleBits.toInt(2)
-                            val command = asciiCode.toChar()
-
-                            if (command in validCommands) {
-                                commands.add(command)
-                                addLog("VALID COMMAND: '$command' (binary: $middleBits, ASCII: $asciiCode)")
-                            } else {
-                                addLog("INVALID COMMAND: '$command' (not in $validCommands)")
-                            }
-                        } catch (e: Exception) {
-                            addLog("BINARY DECODE ERROR: $middleBits - ${e.message}")
+                        val asciiValue = middleBits.toInt(2)
+                        val decodedChar = asciiValue.toChar()
+                        if (decodedChar in validCommands) {
+                            commands.add(decodedChar)
+                            addLog("FOUND COMMAND: '$decodedChar' at index=$i (ASCII=$asciiValue)")
+                        } else {
+                            addLog("IGNORED COMMAND: '$decodedChar' (not in supported set)")
                         }
-                    } else {
-                        addLog("END PATTERN MISMATCH: expected $endPattern, got $potentialEnd")
                     }
                 }
             }
@@ -270,7 +246,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             }
             else -> {
                 addLog("MULTIPLE COMMANDS: $commands")
-                onStatusUpdate?.invoke("Multiple commands detected - please select")
+                onStatusUpdate?.invoke("Multiple commands detected \u002D please select")
                 stopListening()
                 onPossibleCommands?.invoke(commands)
             }

@@ -31,21 +31,11 @@ object VibrationController {
                 withContext(Dispatchers.Main) {
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            // Fix: amplitude must match the actual pattern, not a fixed 17-bit reference.
+                            // We vibrate only on the 200ms segments (the "ON" part of a '1' bit).
                             val amplitudes = IntArray(pattern.size) { index ->
-                                var isVibration = false
-                                var currentIndex = 0
-                                for (bit in getBinaryPatternForCommand('a')) { // reference shape
-                                    if (bit == '1') {
-                                        if (index == currentIndex + 1) {
-                                            isVibration = true
-                                            break
-                                        }
-                                        currentIndex += 3
-                                    } else {
-                                        currentIndex += 1
-                                    }
-                                }
-                                if (isVibration) 255 else 0
+                                val duration = pattern[index]
+                                if (duration == 200L) 255 else 0
                             }
 
                             Log.d("VibrationController", "Amplitudes: ${amplitudes.joinToString()}")
@@ -55,20 +45,8 @@ object VibrationController {
                         } else {
                             @Suppress("DEPRECATION")
                             val amplitudes = IntArray(pattern.size) { index ->
-                                var isVibration = false
-                                var currentIndex = 0
-                                for (bit in getBinaryPatternForCommand('a')) {
-                                    if (bit == '1') {
-                                        if (index == currentIndex + 1) {
-                                            isVibration = true
-                                            break
-                                        }
-                                        currentIndex += 3
-                                    } else {
-                                        currentIndex += 1
-                                    }
-                                }
-                                if (isVibration) 255 else 0
+                                val duration = pattern[index]
+                                if (duration == 200L) 255 else 0
                             }
 
                             val compatiblePattern = mutableListOf<Long>()
@@ -93,6 +71,38 @@ object VibrationController {
         } else {
             Log.e("VibrationController", "No vibrator available")
         }
+    }
+
+    /**
+     * New overload: transmit an arbitrary OOK bitstring (e.g., 41-bit secure payload).
+     * Bit encoding (OOK scheme):
+     * - '1': 400ms pause → 200ms vibration → 400ms pause
+     * - '0': 1000ms pause (no vibration)
+     */
+    @RequiresPermission(Manifest.permission.VIBRATE)
+    fun vibrate(context: Context, payloadBits: String) {
+        require(payloadBits.isNotEmpty())
+        require(payloadBits.all { it == '0' || it == '1' }) { "payloadBits must be a bitstring" }
+
+        Log.d("VibrationController", "Secure payload bits length=${payloadBits.length}")
+        Log.d("VibrationController", "Secure payload bits=$payloadBits")
+
+        val pattern = encodeOokBits(payloadBits)
+        vibrate(context, pattern)
+    }
+
+    private fun encodeOokBits(bits: String): LongArray {
+        val pattern = mutableListOf<Long>()
+        for (bit in bits) {
+            if (bit == '1') {
+                pattern.add(400)
+                pattern.add(200)
+                pattern.add(400)
+            } else {
+                pattern.add(1000)
+            }
+        }
+        return pattern.toLongArray()
     }
 
     // Helper function to get binary pattern for a command (5-bit start/end + 7-bit data = 17 bits)

@@ -62,6 +62,9 @@ fun HomeMenu(
     var passphraseError by remember { mutableStateOf("") }
     val pssKeyState = remember { mutableStateOf<ByteArray?>(null) }
 
+    // New: remember which method user chose for this flow
+    var useCryptoForPendingAction by remember { mutableStateOf(false) }
+
     fun resetAllStates() {
         isListening = false
         isTransmitting = false
@@ -81,6 +84,7 @@ fun HomeMenu(
         showPassphraseDialog = false
         passphrase = ""
         passphraseError = ""
+        useCryptoForPendingAction = false
         pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
     }
 
@@ -147,8 +151,6 @@ fun HomeMenu(
             return
         }
 
-        val pattern = VibrationEncoder.encodeCommand(command)
-
         accelerationData = emptyList()
         possibleCommands = emptyList()
         decodingStatus = ""
@@ -157,24 +159,86 @@ fun HomeMenu(
         transactionStatus = "Sending $$amount to $otherUser..."
         showTxnStatusDialog = true
 
-        VibrationController.vibrate(context, pattern)
+        if (!useCryptoForPendingAction) {
+            // Original implementation (Without Protection) unchanged
+            val pattern = VibrationEncoder.encodeCommand(command)
+            VibrationController.vibrate(context, pattern)
+
+            coroutineScope.launch {
+                delay(pattern.sum() + 800L)
+
+                if (isTransmitting) {
+                    val ok = Database.transfer(username, otherUser, amount.toDouble())
+                    balance = Database.getBalance(username) ?: balance
+                    transactionStatus = if (ok) {
+                        "$username send $$amount to $otherUser"
+                    } else {
+                        "Payment failed"
+                    }
+                    isTransmitting = false
+                    showTxnStatusDialog = true
+
+                    // Clear key after a completed send attempt
+                    pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+                }
+            }
+            return
+        }
+
+        // With Cryptographic: sender encryption + 41-bit OOK payload transmission
+        val pssKey = pssKeyState.value
+        if (pssKey == null) {
+            transactionStatus = "Cryptographic key not set"
+            isTransmitting = false
+            showTxnStatusDialog = true
+            return
+        }
+
+        val messageBits17 = run {
+            val asciiCode = command.code
+            val binaryString = asciiCode.toString(2).padStart(7, '0')
+            val startBinary = "00010"
+            val endBinary = "00011"
+            startBinary + binaryString + endBinary
+        }
+
+        val payload41 = try {
+            LightweightCrypto.buildSecurePayloadBits(
+                pssKey = pssKey,
+                messageBits17 = messageBits17
+            )
+        } catch (e: Exception) {
+            Log.e("HomeMenu", "Secure payload build error: ${e.message}")
+            transactionStatus = e.message ?: "Secure payload build failed"
+            isTransmitting = false
+            showTxnStatusDialog = true
+            return
+        }
+
+        // Transmit secure payload over the vibration channel
+        VibrationController.vibrate(context, payload41)
+
+        val transmitDurationMs = run {
+            // Must match OOK encoder in VibrationController: 0 => 1000ms, 1 => 400+200+400=1000ms
+            // So each bit is 1000ms.
+            payload41.length * 1000L
+        }
 
         coroutineScope.launch {
-            delay(pattern.sum() + 800L)
+            delay(transmitDurationMs + 800L)
 
             if (isTransmitting) {
                 val ok = Database.transfer(username, otherUser, amount.toDouble())
                 balance = Database.getBalance(username) ?: balance
                 transactionStatus = if (ok) {
                     "$username send $$amount to $otherUser"
-                }
-                else {
+                } else {
                     "Payment failed"
                 }
                 isTransmitting = false
                 showTxnStatusDialog = true
 
-                // Clear key after a completed send attempt
+                // Clear key after a completed secure send attempt
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             }
         }
@@ -212,8 +276,7 @@ fun HomeMenu(
     }
 
     fun beginSelectedFlowWithCrypto() {
-        // Step 1 only: establish PSS key via passphrase popup
-        // After key is derived, continue into the existing send/receive flow unchanged.
+        // Step 1: establish PSS key via passphrase popup
         showPassphraseDialog = true
     }
 
@@ -328,7 +391,6 @@ fun HomeMenu(
 
             Spacer(Modifier.height(10.dp))
 
-            // Fix: make Payment History use the same Button style as the other two
             Button(
                 onClick = onOpenHistory,
                 colors = primaryButtonColors,
@@ -336,7 +398,6 @@ fun HomeMenu(
             ) { Text("Payment History") }
         }
 
-        // Bottom-left trademark
         Text(
             text = "© CCS87-CS4514, 2025-2026",
             style = MaterialTheme.typography.bodySmall,
@@ -345,7 +406,6 @@ fun HomeMenu(
                 .padding(bottom = 10.dp)
         )
 
-        // Bottom-right return to login
         Button(
             onClick = {
                 resetAllStates()
@@ -357,7 +417,6 @@ fun HomeMenu(
         ) { Text("Return to Login") }
     }
 
-    // Method picker dialog (shown before send/receive flows)
     if (showMethodPicker) {
         AlertDialog(
             onDismissRequest = { showMethodPicker = false },
@@ -367,6 +426,7 @@ fun HomeMenu(
                 Column {
                     Button(
                         onClick = {
+                            useCryptoForPendingAction = false
                             showMethodPicker = false
                             beginSelectedFlowWithoutProtection()
                         },
@@ -377,6 +437,7 @@ fun HomeMenu(
 
                     Button(
                         onClick = {
+                            useCryptoForPendingAction = true
                             showMethodPicker = false
                             beginSelectedFlowWithCrypto()
                         },
@@ -387,7 +448,6 @@ fun HomeMenu(
         )
     }
 
-    // New: Passphrase dialog for crypto setup (PSS key derivation)
     if (showPassphraseDialog) {
         AlertDialog(
             onDismissRequest = {
@@ -395,6 +455,7 @@ fun HomeMenu(
                 passphrase = ""
                 passphraseError = ""
                 pendingAction = null
+                useCryptoForPendingAction = false
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             },
             title = { Text("Enter Passphrase") },
@@ -446,6 +507,7 @@ fun HomeMenu(
                         passphrase = ""
                         passphraseError = ""
                         pendingAction = null
+                        useCryptoForPendingAction = false
                         pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
                     }
                 ) { Text("Cancel") }
