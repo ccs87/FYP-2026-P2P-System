@@ -97,13 +97,72 @@ fun HomeMenu(
         possibleCommands = emptyList()
         showTxnStatusDialog = true
 
-        vibrationDecoder.startListening(
+        if (!useCryptoForPendingAction) {
+            // Without Protection: keep existing 20s forced decode
+            vibrationDecoder.startListening(
+                onDataReceived = { command ->
+                    val amount = VibrationEncoder.getAmountForCommand(command)
+                    if (amount == null) {
+                        decodingStatus = "Unknown command received: $command"
+                        showTxnStatusDialog = true
+                        return@startListening
+                    }
+
+                    val ok = Database.transfer(otherUser, username, amount.toDouble())
+                    balance = Database.getBalance(username) ?: balance
+                    decodingStatus =
+                        if (ok) "Received $$amount from $otherUser" else "Receive failed"
+                    transactionStatus = decodingStatus
+                    showTxnStatusDialog = true
+
+                    isListening = false
+                    vibrationDecoder.stopListening()
+
+                    // Clear key after a completed receive attempt
+                    pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+                },
+                onPossibleCommands = { commands ->
+                    possibleCommands = commands
+                    decodingStatus = "Multiple commands detected: ${commands.joinToString()}"
+                    showTxnStatusDialog = true
+                },
+                onAccelerationData = { magnitude ->
+                    accelerationData = (accelerationData + magnitude).takeLast(300)
+                },
+                onTimeout = {
+                    isListening = false
+                    decodingStatus = "Timeout - no valid pattern detected"
+                    transactionStatus = decodingStatus
+                    showTxnStatusDialog = true
+
+                    // Clear key on timeout, best-effort
+                    pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
+                },
+                onStatusUpdate = { status ->
+                    decodingStatus = status
+                },
+                forcedDecodeDelayMs = 20000
+            )
+            return
+        }
+
+        // With Cryptographic: expect 41-bit secure payload, set forced decode to 45s
+        val pssKey = pssKeyState.value
+        if (pssKey == null) {
+            transactionStatus = "Cryptographic key not set"
+            isListening = false
+            showTxnStatusDialog = true
+            return
+        }
+
+        vibrationDecoder.startListeningSecure(
+            pssKey = pssKey,
             onDataReceived = { command ->
                 val amount = VibrationEncoder.getAmountForCommand(command)
                 if (amount == null) {
                     decodingStatus = "Unknown command received: $command"
                     showTxnStatusDialog = true
-                    return@startListening
+                    return@startListeningSecure
                 }
 
                 val ok = Database.transfer(otherUser, username, amount.toDouble())
@@ -116,7 +175,7 @@ fun HomeMenu(
                 isListening = false
                 vibrationDecoder.stopListening()
 
-                // Clear key after a completed receive attempt
+                // Clear key after a completed secure receive attempt
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             },
             onPossibleCommands = { commands ->
@@ -138,7 +197,8 @@ fun HomeMenu(
             },
             onStatusUpdate = { status ->
                 decodingStatus = status
-            }
+            },
+            forcedDecodeDelayMs = 45000
         )
     }
 
@@ -403,7 +463,7 @@ fun HomeMenu(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(bottom = 12.dp)
+                .padding(bottom = 25.dp)
         )
 
         Button(

@@ -29,6 +29,11 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private val accelList = mutableListOf<AccelValue>()
     private var startTime: Long = 0
 
+    // New: receiver decode mode and key for secure payload verification/decryption
+    private enum class DecodeMode { LEGACY_17BIT, SECURE_41BIT }
+    private var decodeMode: DecodeMode = DecodeMode.LEGACY_17BIT
+    private var receiverPssKey: ByteArray? = null
+
     fun startListening(
         onDataReceived: (Char) -> Unit,
         onPossibleCommands: (List<Char>) -> Unit,
@@ -47,6 +52,10 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         logEntries.clear()
         lastDecodedCommand = null
         startTime = System.currentTimeMillis()
+
+        // Default behavior: legacy 17-bit decode unless explicitly enabled as secure by caller.
+        decodeMode = DecodeMode.LEGACY_17BIT
+        receiverPssKey = null
 
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_FASTEST)
@@ -70,6 +79,33 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         }
 
         addLog("STARTED LISTENING \u002D Forced decode: ${forcedDecodeDelayMs}ms")
+    }
+
+    // New overload: secure receive (41-bit payload)
+    fun startListeningSecure(
+        pssKey: ByteArray,
+        onDataReceived: (Char) -> Unit,
+        onPossibleCommands: (List<Char>) -> Unit,
+        onAccelerationData: ((Float) -> Unit)? = null,
+        onTimeout: (() -> Unit)? = null,
+        onStatusUpdate: ((String) -> Unit)? = null,
+        forcedDecodeDelayMs: Long = 45000
+    ) {
+        // Reuse existing setup
+        startListening(
+            onDataReceived = onDataReceived,
+            onPossibleCommands = onPossibleCommands,
+            onAccelerationData = onAccelerationData,
+            onTimeout = onTimeout,
+            onStatusUpdate = onStatusUpdate,
+            forcedDecodeDelayMs = forcedDecodeDelayMs
+        )
+
+        require(pssKey.size == 16) { "PSS key must be 128-bit (16 bytes)" }
+        decodeMode = DecodeMode.SECURE_41BIT
+        receiverPssKey = pssKey
+        addLog("SECURE MODE ENABLED \u002D expecting 41-bit payload (N||C)")
+        Log.d("VibrationDecoder", "Secure receive enabled: forcedDecodeDelayMs=$forcedDecodeDelayMs")
     }
 
     fun stopListening() {
@@ -136,21 +172,40 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         addLog("STARTING DECODE \u002D ${accelList.size} data points collected")
         onStatusUpdate?.invoke("Processing vibration data...")
 
-        val binaryString = detectBitsFromVibrationPattern()
+        val targetBits = if (decodeMode == DecodeMode.SECURE_41BIT) 41 else 17
+        val binaryString = detectBitsFromVibrationPattern(targetBits)
         addLog("RAW BINARY DETECTED: $binaryString (${binaryString.length} bits)")
+        Log.d("VibrationDecoder", "rawBits(len=${binaryString.length})=$binaryString")
 
-        if (binaryString.length >= 17) {
-            findAndDecodeCommand(binaryString)
-        } else {
-            addLog("DECODE FAILED: Need 17 bits, got ${binaryString.length}")
-            onStatusUpdate?.invoke("Incomplete pattern detected (${binaryString.length}/17 bits)")
-            if (binaryString.length >= 12) {
-                findAndDecodeCommand(binaryString)
+        when (decodeMode) {
+            DecodeMode.SECURE_41BIT -> {
+                if (binaryString.length >= 41) {
+                    val ok = tryDecodeSecurePayload(binaryString)
+                    if (!ok) {
+                        addLog("SECURE DECODE FAILED \u2192 integrity/authentication check failed or pattern invalid")
+                        onStatusUpdate?.invoke("Secure decode failed \u002D message rejected")
+                    }
+                } else {
+                    addLog("SECURE DECODE FAILED: Need 41 bits, got ${binaryString.length}")
+                    onStatusUpdate?.invoke("Incomplete secure pattern (${binaryString.length}/41 bits)")
+                }
+            }
+
+            DecodeMode.LEGACY_17BIT -> {
+                if (binaryString.length >= 17) {
+                    findAndDecodeCommand(binaryString)
+                } else {
+                    addLog("DECODE FAILED: Need 17 bits, got ${binaryString.length}")
+                    onStatusUpdate?.invoke("Incomplete pattern detected (${binaryString.length}/17 bits)")
+                    if (binaryString.length >= 12) {
+                        findAndDecodeCommand(binaryString)
+                    }
+                }
             }
         }
     }
 
-    private fun detectBitsFromVibrationPattern(): String {
+    private fun detectBitsFromVibrationPattern(targetBits: Int): String {
         val binary = StringBuilder()
         val vibrationThreshold = 9.66f
         val bitDuration = 1000L // 1 second per bit
@@ -164,7 +219,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         val totalDuration = accelList.last().time - startTimestamp
         val expectedBits = (totalDuration / bitDuration).toInt().coerceAtLeast(1)
 
-        addLog("BIT DETECTION: Duration=${totalDuration}ms, Expected bits=${expectedBits}")
+        addLog("BIT DETECTION: Duration=${totalDuration}ms, Expected bits=${expectedBits}, Target bits=${targetBits}")
 
         var bitsDetected = 0
 
@@ -194,11 +249,119 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                 addLog("Bit $bitIndex: NO DATA \u2192 0")
             }
 
-            if (bitsDetected >= 17) break
+            if (bitsDetected >= targetBits) break
         }
 
         addLog("COMPLETED BIT DETECTION: $bitsDetected bits")
         return binary.toString()
+    }
+
+    // New: secure decode (41-bit payload) -> decrypt -> verify tag -> decode 17-bit M
+    private fun tryDecodeSecurePayload(bits41: String): Boolean {
+        val key = receiverPssKey
+        if (key == null) {
+            addLog("SECURE DECODE FAILED: PSS key not set on receiver")
+            Log.d("VibrationDecoder", "secureDecode: missing pssKey")
+            return false
+        }
+        if (bits41.length < 41) return false
+
+        val nonceBits8 = bits41.substring(0, 8)
+        val ciphertext33 = bits41.substring(8, 41)
+
+        val nonce = try {
+            nonceBits8.toInt(2)
+        } catch (e: Exception) {
+            addLog("SECURE DECODE FAILED: invalid nonce bits")
+            return false
+        }
+
+        addLog("SECURE RX: payloadBits41=$bits41")
+        addLog("SECURE RX: N(bits)=$nonceBits8 N(int)=$nonce")
+        addLog("SECURE RX: C(33)=$ciphertext33")
+
+        Log.d("VibrationDecoder", "secureRx payload41=$bits41")
+        Log.d("VibrationDecoder", "secureRx nonceBits8=$nonceBits8 nonce=$nonce")
+        Log.d("VibrationDecoder", "secureRx ciphertext33=$ciphertext33")
+
+        val keystream33 = aesCtrKeystream33Bits(key, nonce)
+        val plaintext33 = xorBits(ciphertext33, keystream33)
+
+        addLog("SECURE RX: K(33)=$keystream33")
+        addLog("SECURE RX: P'(33)=C XOR K =$plaintext33")
+
+        Log.d("VibrationDecoder", "secureRx keystream33=$keystream33")
+        Log.d("VibrationDecoder", "secureRx plaintext33=$plaintext33")
+
+        val messageBits17 = plaintext33.substring(0, 17)
+        val tag16 = plaintext33.substring(17, 33)
+
+        addLog("SECURE RX: M'(17)=$messageBits17")
+        addLog("SECURE RX: T_recv(16)=$tag16")
+
+        val expectedTag16 = hmacSha256Trunc16Bits(
+            key16 = key,
+            data = (messageBits17 + nonceBits8).toByteArray(Charsets.UTF_8)
+        )
+
+        addLog("SECURE RX: T_exp(16)=$expectedTag16")
+        Log.d("VibrationDecoder", "secureRx tagRecv=$tag16 tagExp=$expectedTag16")
+
+        if (expectedTag16 != tag16) {
+            addLog("SECURE RX: TAG MISMATCH \u2192 reject")
+            onStatusUpdate?.invoke("Secure message rejected \u002D invalid tag")
+            return false
+        }
+
+        addLog("SECURE RX: TAG OK \u2192 decode legacy 17-bit message")
+        onStatusUpdate?.invoke("Secure message verified \u002D decoding...")
+
+        // Now decode the original 17-bit vibration message
+        findAndDecodeCommand(messageBits17)
+        return true
+    }
+
+    // Local (receiver) equivalents of LightweightCrypto internals \- kept here to avoid changing other files.
+    private fun hmacSha256Trunc16Bits(key16: ByteArray, data: ByteArray): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(key16, "HmacSHA256"))
+        val full = mac.doFinal(data)
+
+        val b0 = full[0].toInt() and 0xFF
+        val b1 = full[1].toInt() and 0xFF
+        val v = (b0 shl 8) or b1
+        return v.toString(2).padStart(16, '0')
+    }
+
+    private fun aesCtrKeystream33Bits(pssKey16: ByteArray, nonce0to255: Int): String {
+        val aes = javax.crypto.Cipher.getInstance("AES/ECB/NoPadding")
+        aes.init(javax.crypto.Cipher.ENCRYPT_MODE, javax.crypto.spec.SecretKeySpec(pssKey16, "AES"))
+
+        val block = ByteArray(16)
+        block[0] = (nonce0to255 and 0xFF).toByte()
+        block[1] = 0x00
+
+        val out = aes.doFinal(block)
+        val outBits = out.toBitString()
+        return outBits.substring(0, 33)
+    }
+
+    private fun xorBits(a: String, b: String): String {
+        require(a.length == b.length) { "xorBits requires equal length" }
+        val sb = StringBuilder(a.length)
+        for (i in a.indices) {
+            sb.append(if (a[i] == b[i]) '0' else '1')
+        }
+        return sb.toString()
+    }
+
+    private fun ByteArray.toBitString(): String {
+        val sb = StringBuilder(this.size * 8)
+        for (byte in this) {
+            val v = byte.toInt() and 0xFF
+            sb.append(v.toString(2).padStart(8, '0'))
+        }
+        return sb.toString()
     }
 
     private fun findAndDecodeCommand(binaryString: String) {
