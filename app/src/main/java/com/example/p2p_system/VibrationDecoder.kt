@@ -129,7 +129,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
             onAccelerationData?.invoke(magnitude)
             accelList.add(AccelValue(currentTime, magnitude))
 
-            if (magnitude > 9.66f) {
+            if (magnitude > 9.65f) {
                 val elapsed = currentTime - startTime
                 addLog("*** HIGH VIBRATION: ${magnitude.format(2)} at ${elapsed}ms ***")
             }
@@ -207,7 +207,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
 
     private fun detectBitsFromVibrationPattern(targetBits: Int): String {
         val binary = StringBuilder()
-        val vibrationThreshold = 9.66f
+        val vibrationThreshold = 9.65f
         val bitDuration = 1000L // 1 second per bit
 
         if (accelList.isEmpty()) {

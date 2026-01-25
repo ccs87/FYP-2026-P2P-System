@@ -41,8 +41,8 @@ object Database {
     )
 
     private val balances = mutableMapOf(
-        "test1" to 1000.0,
-        "test2" to 1000.0,
+        "test1" to 100000.0,
+        "test2" to 100000.0,
         // Admin exists but must not transact; balance is irrelevant but keep defined.
         "admin1" to 0.0
     )

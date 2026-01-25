@@ -122,18 +122,20 @@ object LightweightCrypto {
      *
      * This avoids padding and yields deterministic stream bits for the nonce.
      */
+
+
+    // Build 16-byte input block:
+    // [ nonce(1) | counter(1) | 14 bytes 0 ]
+    // Counter is fixed to 0 for 33-bit keystream (single block is enough).
+    // rest already 0
+
     private fun aesCtrKeystream33Bits(pssKey16: ByteArray, nonce0to255: Int): String {
         val aes = javax.crypto.Cipher.getInstance("AES/ECB/NoPadding")
         aes.init(javax.crypto.Cipher.ENCRYPT_MODE, SecretKeySpec(pssKey16, "AES"))
 
-        // Build 16-byte input block:
-        // [ nonce(1) | counter(1) | 14 bytes 0 ]
-        // Counter is fixed to 0 for 33-bit keystream (single block is enough).
         val block = ByteArray(16)
         block[0] = (nonce0to255 and 0xFF).toByte()
         block[1] = 0x00
-        // rest already 0
-
         val out = aes.doFinal(block) // 16 bytes
         val outBits = out.toBitString()
 
@@ -160,9 +162,6 @@ object LightweightCrypto {
         return sb.toString()
     }
 
-    /**
-     * Best-effort: zero out the provided key bytes and return null (caller should drop references).
-     */
     fun clearKey(key: ByteArray?): ByteArray? {
         if (key == null) return null
         for (i in key.indices) key[i] = 0
