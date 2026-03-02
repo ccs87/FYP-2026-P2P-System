@@ -90,7 +90,6 @@ fun AppNavigation(
             )
         }
 
-        // New: admin home
         composable("adminHome/{username}") { backStackEntry ->
             val username = backStackEntry.arguments?.getString("username") ?: return@composable
             AdminHomeMenu(

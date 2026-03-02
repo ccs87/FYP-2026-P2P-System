@@ -1,5 +1,3 @@
-// File: `app/src/main/java/com/example/p2p_system/RegisterScreen.kt`
-
 package com.example.p2p_system
 
 import androidx.compose.foundation.layout.*

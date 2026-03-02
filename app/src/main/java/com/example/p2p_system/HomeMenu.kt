@@ -52,17 +52,14 @@ fun HomeMenu(
     var showSendPicker by remember { mutableStateOf(false) }
     var showTxnStatusDialog by remember { mutableStateOf(false) }
 
-    // New: method picker shown before send/receive
     var showMethodPicker by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<TxAction?>(null) }
 
-    // New: cryptographic setup (passphrase -> PBKDF2 -> 128-bit PSS key)
     var showPassphraseDialog by remember { mutableStateOf(false) }
     var passphrase by remember { mutableStateOf("") }
     var passphraseError by remember { mutableStateOf("") }
     val pssKeyState = remember { mutableStateOf<ByteArray?>(null) }
 
-    // New: remember which method user chose for this flow
     var useCryptoForPendingAction by remember { mutableStateOf(false) }
 
     fun resetAllStates() {
@@ -78,7 +75,7 @@ fun HomeMenu(
         showSendPicker = false
         showTxnStatusDialog = false
 
-        // New: reset crypto UI/state
+
         showMethodPicker = false
         pendingAction = null
         showPassphraseDialog = false
@@ -98,7 +95,6 @@ fun HomeMenu(
         showTxnStatusDialog = true
 
         if (!useCryptoForPendingAction) {
-            // Without Protection: keep existing 20s forced decode
             vibrationDecoder.startListening(
                 onDataReceived = { command ->
                     val amount = VibrationEncoder.getAmountForCommand(command)
@@ -118,7 +114,6 @@ fun HomeMenu(
                     isListening = false
                     vibrationDecoder.stopListening()
 
-                    // Clear key after a completed receive attempt
                     pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
                 },
                 onPossibleCommands = { commands ->
@@ -135,7 +130,6 @@ fun HomeMenu(
                     transactionStatus = decodingStatus
                     showTxnStatusDialog = true
 
-                    // Clear key on timeout, best-effort
                     pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
                 },
                 onStatusUpdate = { status ->
@@ -146,7 +140,6 @@ fun HomeMenu(
             return
         }
 
-        // With Cryptographic: expect 41-bit secure payload, set forced decode to 45s
         val pssKey = pssKeyState.value
         if (pssKey == null) {
             transactionStatus = "Cryptographic key not set"
@@ -175,7 +168,6 @@ fun HomeMenu(
                 isListening = false
                 vibrationDecoder.stopListening()
 
-                // Clear key after a completed secure receive attempt
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             },
             onPossibleCommands = { commands ->
@@ -192,7 +184,6 @@ fun HomeMenu(
                 transactionStatus = decodingStatus
                 showTxnStatusDialog = true
 
-                // Clear key on timeout, best-effort
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             },
             onStatusUpdate = { status ->
@@ -220,7 +211,6 @@ fun HomeMenu(
         showTxnStatusDialog = true
 
         if (!useCryptoForPendingAction) {
-            // Original implementation (Without Protection) unchanged
             val pattern = VibrationEncoder.encodeCommand(command)
             VibrationController.vibrate(context, pattern)
 
@@ -238,14 +228,12 @@ fun HomeMenu(
                     isTransmitting = false
                     showTxnStatusDialog = true
 
-                    // Clear key after a completed send attempt
                     pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
                 }
             }
             return
         }
 
-        // With Cryptographic: sender encryption + 41-bit OOK payload transmission
         val pssKey = pssKeyState.value
         if (pssKey == null) {
             transactionStatus = "Cryptographic key not set"
@@ -275,12 +263,9 @@ fun HomeMenu(
             return
         }
 
-        // Transmit secure payload over the vibration channel
         VibrationController.vibrate(context, payload41)
 
         val transmitDurationMs = run {
-            // Must match OOK encoder in VibrationController: 0 => 1000ms, 1 => 400+200+400=1000ms
-            // So each bit is 1000ms.
             payload41.length * 1000L
         }
 
@@ -298,7 +283,6 @@ fun HomeMenu(
                 isTransmitting = false
                 showTxnStatusDialog = true
 
-                // Clear key after a completed secure send attempt
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
             }
         }
@@ -311,7 +295,6 @@ fun HomeMenu(
         if (transactionStatus.isBlank()) transactionStatus = "Listening stopped"
         showTxnStatusDialog = true
 
-        // New: clear key when user stops
         pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
     }
 
@@ -322,7 +305,6 @@ fun HomeMenu(
         showSendPicker = false
         showTxnStatusDialog = true
 
-        // New: clear key when user stops
         pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
     }
 
@@ -336,7 +318,6 @@ fun HomeMenu(
     }
 
     fun beginSelectedFlowWithCrypto() {
-        // Step 1: establish PSS key via passphrase popup
         showPassphraseDialog = true
     }
 
@@ -391,7 +372,6 @@ fun HomeMenu(
         )
     }
 
-    // Keep buttons visually consistent (same implementation + same colors)
     val primaryButtonColors = ButtonDefaults.buttonColors()
 
     Box(

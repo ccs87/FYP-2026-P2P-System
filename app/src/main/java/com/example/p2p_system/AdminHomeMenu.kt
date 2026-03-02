@@ -18,7 +18,6 @@ fun AdminHomeMenu(
     onReturnToLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Hard guard: if someone navigates here without admin rights.
     if (!Database.isAdmin(username)) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("Access denied")
@@ -27,7 +26,7 @@ fun AdminHomeMenu(
     }
 
     val allRecords by Database.recordsFlow.collectAsState()
-    var selectedTab by remember { mutableStateOf(0) } // 0=Management, 1=Logs
+    var selectedTab by remember { mutableStateOf(0) }
     var refreshTick by remember { mutableIntStateOf(0) }
 
     val sdf = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }

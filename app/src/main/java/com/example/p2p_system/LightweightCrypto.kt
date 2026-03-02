@@ -11,8 +11,6 @@ import javax.crypto.spec.SecretKeySpec
 object LightweightCrypto {
     private const val TAG = "LightweightCrypto"
 
-    // Static salt + fixed iterations as requested (hard-coded so both devices derive same key)
-    // NOTE: keep constant to preserve key derivation behavior across devices.
     private val STATIC_SALT: ByteArray =
         byteArrayOf(
             0x43, 0x43, 0x53, 0x38, 0x37, 0x2D, 0x43, 0x53,
@@ -22,10 +20,6 @@ object LightweightCrypto {
     private const val ITERATION_COUNT = 10_000
     private const val KEY_LENGTH_BITS = 128
 
-    /**
-     * Derives a 128-bit PSS key using PBKDF2 (HMAC-SHA256).
-     * Returns raw key bytes (16 bytes).
-     */
     fun derivePssKey(passphrase: String): ByteArray {
         val normalized = passphrase.trim()
         Log.d(TAG, "Key derivation requested")
@@ -52,16 +46,6 @@ object LightweightCrypto {
         return keyBytes
     }
 
-    /**
-     * Builds the 41-bit payload for sender:
-     * Payload = N || C
-     * N = 8-bit nonce
-     * M = original 17-bit vibration message bits
-     * T = truncate(HMAC(PSS_key, M || N), 16 bits)
-     * P = M || T (33 bits)
-     * K = 33-bit keystream derived from AES-CTR with (PSS_key, N)
-     * C = P XOR K (33 bits)
-     */
     fun buildSecurePayloadBits(
         pssKey: ByteArray,
         messageBits17: String,
@@ -80,7 +64,6 @@ object LightweightCrypto {
         Log.d(TAG, "Nonce N (0..255)=$n")
         Log.d(TAG, "N (8-bit)=$nonceBits8")
 
-        // HMAC input: M || N, as bytes of ASCII '0'/'1' to keep it deterministic for both ends.
         val mnBits = messageBits17 + nonceBits8
         val mnBytes = mnBits.toByteArray(Charset.forName("UTF-8"))
 
@@ -107,27 +90,11 @@ object LightweightCrypto {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(key16, "HmacSHA256"))
         val full = mac.doFinal(data) // 32 bytes
-
-        // Take first 2 bytes (16 bits) and render as 16-bit binary
         val b0 = full[0].toInt() and 0xFF
         val b1 = full[1].toInt() and 0xFF
         val v = (b0 shl 8) or b1
         return v.toString(2).padStart(16, '0')
     }
-
-    /**
-     * Generates exactly 33 bits of keystream using AES-CTR-like construction.
-     * Implementation detail: use AES-ECB on (nonce || counter || zero padding) to
-     * generate a 128-bit block, then take first 33 bits.
-     *
-     * This avoids padding and yields deterministic stream bits for the nonce.
-     */
-
-
-    // Build 16-byte input block:
-    // [ nonce(1) | counter(1) | 14 bytes 0 ]
-    // Counter is fixed to 0 for 33-bit keystream (single block is enough).
-    // rest already 0
 
     private fun aesCtrKeystream33Bits(pssKey16: ByteArray, nonce0to255: Int): String {
         val aes = javax.crypto.Cipher.getInstance("AES/ECB/NoPadding")

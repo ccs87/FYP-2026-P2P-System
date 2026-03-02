@@ -20,7 +20,7 @@ fun PaymentHistoryScreen(
 ) {
     val allRecords by Database.recordsFlow.collectAsState()
     var search by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableStateOf(0) } // 0=All, 1=Pay, 2=Receive
+    var selectedTab by remember { mutableStateOf(0) }
     val sdf = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
 
     fun matchesQuery(rec: TransactionRecord, q: String): Boolean {

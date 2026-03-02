@@ -20,7 +20,7 @@ data class TransactionRecord(
     val timestamp: Long,
     val fromUser: String,
     val toUser: String,
-    val amount: Double, // store actual amount
+    val amount: Double,
     val note: String? = null
 )
 
@@ -32,22 +32,18 @@ data class UserSnapshot(
 )
 
 object Database {
-    // Pre-existing users for testing purposes
     private val users = mutableListOf(
         User(username = "test1", password = "1234"),
         User(username = "test2", password = "1234"),
-        // New: server administrator account
         User(username = "admin1", password = "1234", isAdmin = true)
     )
 
     private val balances = mutableMapOf(
         "test1" to 100000.0,
         "test2" to 100000.0,
-        // Admin exists but must not transact; balance is irrelevant but keep defined.
         "admin1" to 0.0
     )
 
-    // New: user status tracking
     private val statuses = mutableMapOf(
         "test1" to UserStatus.ACTIVE,
         "test2" to UserStatus.ACTIVE,
@@ -60,7 +56,6 @@ object Database {
         "admin1" to emptyList()
     )
 
-    // Transaction history
     private val records = mutableListOf<TransactionRecord>()
     private val _recordsFlow = MutableStateFlow<List<TransactionRecord>>(emptyList())
     val recordsFlow: StateFlow<List<TransactionRecord>> = _recordsFlow.asStateFlow()
@@ -143,10 +138,8 @@ object Database {
     }
 
     fun transfer(fromUser: String, toUser: String, amount: Double): Boolean {
-        // New: admin cannot perform transactions
         if (isAdmin(fromUser) || isAdmin(toUser)) return false
 
-        // New: deactivated users cannot transact
         if (getStatus(fromUser) != UserStatus.ACTIVE) return false
         if (getStatus(toUser) != UserStatus.ACTIVE) return false
 

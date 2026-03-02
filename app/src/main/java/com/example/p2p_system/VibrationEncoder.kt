@@ -2,13 +2,11 @@ package com.example.p2p_system
 import android.util.Log
 
 object VibrationEncoder {
-    // Supported commands
     private val commandMap = mapOf(
-        'a' to 100, // Pay $100
-        'b' to 200  // Pay $200
+        'a' to 100,
+        'b' to 200
     )
 
-    // Reverse mapping for decoding
     private val amountToCommand = mapOf(
         100 to 'a',
         200 to 'b'
@@ -34,15 +32,12 @@ object VibrationEncoder {
 
         val pattern = mutableListOf<Long>()
 
-        // Encode each bit
         for (bit in fullBinary) {
             if (bit == '1') {
-                // For '1': 400ms pause → 200ms vibration → 400ms pause
                 pattern.add(400)   // Pause 400ms
                 pattern.add(200)   // Vibrate 200ms
                 pattern.add(400)   // Pause 400ms
             } else {
-                // For '0': 1000ms pause (no vibration)
                 pattern.add(1000)  // Pause 1000ms
             }
         }

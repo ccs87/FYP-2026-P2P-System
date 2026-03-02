@@ -29,7 +29,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private val accelList = mutableListOf<AccelValue>()
     private var startTime: Long = 0
 
-    // New: receiver decode mode and key for secure payload verification/decryption
     private enum class DecodeMode { LEGACY_17BIT, SECURE_41BIT }
     private var decodeMode: DecodeMode = DecodeMode.LEGACY_17BIT
     private var receiverPssKey: ByteArray? = null
@@ -53,7 +52,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         lastDecodedCommand = null
         startTime = System.currentTimeMillis()
 
-        // Default behavior: legacy 17-bit decode unless explicitly enabled as secure by caller.
         decodeMode = DecodeMode.LEGACY_17BIT
         receiverPssKey = null
 
@@ -68,7 +66,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
                 onStatusUpdate?.invoke("Analyzing vibration pattern...")
                 attemptDecode()
 
-                // If forced decode finished and nothing valid was decoded, end immediately.
                 if (isReceiving && lastDecodedCommand == null) {
                     addLog("FORCED DECODE COMPLETE: No valid command \u2192 timeout")
                     onStatusUpdate?.invoke("Timeout \u002D no valid pattern detected")
@@ -81,7 +78,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         addLog("STARTED LISTENING \u002D Forced decode: ${forcedDecodeDelayMs}ms")
     }
 
-    // New overload: secure receive (41-bit payload)
     fun startListeningSecure(
         pssKey: ByteArray,
         onDataReceived: (Char) -> Unit,
@@ -91,7 +87,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         onStatusUpdate: ((String) -> Unit)? = null,
         forcedDecodeDelayMs: Long = 45000
     ) {
-        // Reuse existing setup
         startListening(
             onDataReceived = onDataReceived,
             onPossibleCommands = onPossibleCommands,
@@ -208,7 +203,7 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
     private fun detectBitsFromVibrationPattern(targetBits: Int): String {
         val binary = StringBuilder()
         val vibrationThreshold = 9.65f
-        val bitDuration = 1000L // 1 second per bit
+        val bitDuration = 1000L
 
         if (accelList.isEmpty()) {
             addLog("No data available for bit detection")
@@ -256,7 +251,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         return binary.toString()
     }
 
-    // New: secure decode (41-bit payload) -> decrypt -> verify tag -> decode 17-bit M
     private fun tryDecodeSecurePayload(bits41: String): Boolean {
         val key = receiverPssKey
         if (key == null) {
@@ -316,12 +310,10 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         addLog("SECURE RX: TAG OK \u2192 decode legacy 17-bit message")
         onStatusUpdate?.invoke("Secure message verified \u002D decoding...")
 
-        // Now decode the original 17-bit vibration message
         findAndDecodeCommand(messageBits17)
         return true
     }
 
-    // Local (receiver) equivalents of LightweightCrypto internals \- kept here to avoid changing other files.
     private fun hmacSha256Trunc16Bits(key16: ByteArray, data: ByteArray): String {
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
         mac.init(javax.crypto.spec.SecretKeySpec(key16, "HmacSHA256"))
@@ -371,7 +363,6 @@ class VibrationDecoder(private val sensorManager: SensorManager) : SensorEventLi
         val endPattern = "00011"    // 5-bit end
         val commands = mutableListOf<Char>()
 
-        // Fix: allow both supported commands
         val validCommands = listOf('a', 'b')
         for (i in 0..binaryString.length - 17) {
             val potentialStart = binaryString.substring(i, i + 5)
