@@ -51,7 +51,8 @@ fun AppNavigation(
         startDestination = "login",
         modifier = modifier
     ) {
-        composable("login") {
+        composable("login") { backStackEntry ->
+            val registrationSuccessMessage = backStackEntry.savedStateHandle.get<String>("registration_success_message")
             LoginScreen(
                 onLoginSuccess = { username ->
                     if (Database.isAdmin(username)) {
@@ -62,13 +63,23 @@ fun AppNavigation(
                 },
                 onRegisterClick = {
                     navController.navigate("register")
+                },
+                registrationSuccessMessage = registrationSuccessMessage,
+                onRegistrationMessageShown = {
+                    backStackEntry.savedStateHandle.remove<String>("registration_success_message")
                 }
             )
         }
 
         composable("register") {
             RegisterScreen(
-                onRegisterSuccess = {
+                onRegisterSuccess = { username ->
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set(
+                            "registration_success_message",
+                            "Account '$username' created successfully. Please log in on this page."
+                        )
                     navController.popBackStack()
                 },
                 onBackToLogin = {

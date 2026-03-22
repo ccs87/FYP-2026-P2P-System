@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 fun LoginScreen(
     onLoginSuccess: (String) -> Unit,
     onRegisterClick: () -> Unit,
+    registrationSuccessMessage: String? = null,
+    onRegistrationMessageShown: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var username by remember { mutableStateOf("") }
@@ -22,6 +24,13 @@ fun LoginScreen(
     var errorMessage by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(registrationSuccessMessage) {
+        if (!registrationSuccessMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(registrationSuccessMessage)
+            onRegistrationMessageShown()
+        }
+    }
 
     Box(
         modifier = modifier

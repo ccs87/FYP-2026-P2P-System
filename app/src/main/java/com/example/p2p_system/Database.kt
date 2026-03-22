@@ -39,8 +39,8 @@ object Database {
     )
 
     private val balances = mutableMapOf(
-        "test1" to 100000.0,
-        "test2" to 100000.0,
+        "test1" to 1000.0,
+        "test2" to 1000.0,
         "admin1" to 0.0
     )
 
@@ -119,7 +119,7 @@ object Database {
     fun register(username: String, password: String): Boolean {
         if (users.any { it.username == username }) return false
         users.add(User(username, password, isAdmin = false))
-        balances[username] = 100.0
+        balances[username] = 1000.0
         favorites[username] = emptyList()
         statuses[username] = UserStatus.ACTIVE
         return true
@@ -155,7 +155,7 @@ object Database {
                     timestamp = System.currentTimeMillis(),
                     fromUser = fromUser,
                     toUser = toUser,
-                    amount = amount, // Fix: store actual amount sent
+                    amount = amount,
                     note = null
                 )
             )

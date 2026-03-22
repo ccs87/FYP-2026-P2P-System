@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun RegisterScreen(
-    onRegisterSuccess: () -> Unit,
+    onRegisterSuccess: (String) -> Unit,
     onBackToLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -85,7 +85,7 @@ fun RegisterScreen(
                         val error = ErrorHandler.validateRegistration(username, password, confirmPassword)
                         if (error == null) {
                             isLoading = true
-                            onRegisterSuccess()
+                            onRegisterSuccess(username)
                             isLoading = false
                         } else {
                             errorMessage = error
