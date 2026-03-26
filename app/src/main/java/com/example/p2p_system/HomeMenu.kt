@@ -51,6 +51,8 @@ fun HomeMenu(
 
     var showSendPicker by remember { mutableStateOf(false) }
     var showTxnStatusDialog by remember { mutableStateOf(false) }
+    var showSenderResultDialog by remember { mutableStateOf(false) }
+    var pendingSenderAmount by remember { mutableStateOf<Int?>(null) }
 
     var showMethodPicker by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<TxAction?>(null) }
@@ -74,6 +76,8 @@ fun HomeMenu(
 
         showSendPicker = false
         showTxnStatusDialog = false
+        showSenderResultDialog = false
+        pendingSenderAmount = null
 
 
         showMethodPicker = false
@@ -218,14 +222,10 @@ fun HomeMenu(
                 delay(pattern.sum() + 800L)
 
                 if (isTransmitting) {
-                    val ok = Database.transfer(username, otherUser, amount.toDouble())
-                    balance = Database.getBalance(username) ?: balance
-                    transactionStatus = if (ok) {
-                        "$username send $$amount to $otherUser"
-                    } else {
-                        "Payment failed"
-                    }
                     isTransmitting = false
+                    pendingSenderAmount = amount
+                    showSenderResultDialog = true
+                    transactionStatus = "Vibration sent. Confirm if receiver got it successfully."
                     showTxnStatusDialog = true
 
                     pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
@@ -273,14 +273,10 @@ fun HomeMenu(
             delay(transmitDurationMs + 800L)
 
             if (isTransmitting) {
-                val ok = Database.transfer(username, otherUser, amount.toDouble())
-                balance = Database.getBalance(username) ?: balance
-                transactionStatus = if (ok) {
-                    "$username send $$amount to $otherUser"
-                } else {
-                    "Payment failed"
-                }
                 isTransmitting = false
+                pendingSenderAmount = amount
+                showSenderResultDialog = true
+                transactionStatus = "Vibration sent. Confirm if receiver got it successfully."
                 showTxnStatusDialog = true
 
                 pssKeyState.value = LightweightCrypto.clearKey(pssKeyState.value)
@@ -301,6 +297,8 @@ fun HomeMenu(
     fun stopTransmitting() {
         VibrationController.cancelVibration(context)
         isTransmitting = false
+        pendingSenderAmount = null
+        showSenderResultDialog = false
         transactionStatus = "Transmission cancelled"
         showSendPicker = false
         showTxnStatusDialog = true
@@ -370,6 +368,43 @@ fun HomeMenu(
                 }
             }
         )
+    }
+
+    if (showSenderResultDialog) {
+        val amount = pendingSenderAmount
+        if (amount != null) {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("Sender Transaction Confirmation") },
+                text = { Text("Vibration sending finished for $$amount. Was the transaction successful?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val ok = Database.transfer(username, otherUser, amount.toDouble())
+                            balance = Database.getBalance(username) ?: balance
+                            transactionStatus = if (ok) {
+                                "$username send $$amount to $otherUser"
+                            } else {
+                                "Payment failed"
+                            }
+                            showSenderResultDialog = false
+                            pendingSenderAmount = null
+                            showTxnStatusDialog = true
+                        }
+                    ) { Text("Success") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            transactionStatus = "Transaction marked as failed. Balance unchanged."
+                            showSenderResultDialog = false
+                            pendingSenderAmount = null
+                            showTxnStatusDialog = true
+                        }
+                    ) { Text("Fail") }
+                }
+            )
+        }
     }
 
     val primaryButtonColors = ButtonDefaults.buttonColors()
